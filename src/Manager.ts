@@ -17,6 +17,7 @@ export class DBManager{
         const manager = new DBManager(fixedOption);
         manager.instance = await DBInstance.start(fixedOption);
 
+        //#region 处理退出逻辑
         const handleExit = (code:number)=>async () => {
             try{
                 await manager.instance.stop();
@@ -36,6 +37,8 @@ export class DBManager{
             SLogger.fatal('未捕获的拒绝:', reason);
             await handleExit(1)();
         });
+        //#endregion
+
         manager.pool = manager.instance.pool;
         manager.autoSave();
         return manager;
