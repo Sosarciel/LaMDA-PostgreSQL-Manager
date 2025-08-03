@@ -22,8 +22,8 @@ export class DBManager{
             try{
                 await manager.instance.stop();
                 SLogger.info('数据库关闭成功');
-            }catch(e){
-                SLogger.fatal('数据库关闭失败:', e);
+            }catch(err){
+                SLogger.fatal('数据库关闭失败:', err);
             }
             process.exit(code);
         };
@@ -81,7 +81,7 @@ export class DBManager{
                 await UtilFunc.exec(`pg_basebackup -D ${backupPath} -Ft -Xs -U postgres -p ${this.option.port}`);
                 SLogger.info('数据库备份成功:', backupPath);
             } catch (err) {
-                SLogger.warn('数据库备份失败:', err);
+                SLogger.error('数据库备份失败:', err);
             }
 
         }, backupInterval);
@@ -94,9 +94,9 @@ export class DBManager{
         try{
             const result = await db.query('SELECT pg_backend_pid();');
             pid = String(result.rows[0].pg_backend_pid);
-        } catch(e){
+        } catch(err){
             db.release();
-            SLogger.error(e);
+            SLogger.error(err);
             throwError("DBAccesser.transaction获取pid失败",'error');
         }
         const flag = `transaction_${pid}`;
@@ -105,9 +105,9 @@ export class DBManager{
             try{
                 await func(db);
                 await db.query("COMMIT;");
-            }catch(e){
+            }catch(err){
                 await db.query("ROLLBACK;");
-                SLogger.error(e);
+                SLogger.error(err);
                 throwError("DBAccesser.transaction失败",'error');
             }finally{
                 db.release();
