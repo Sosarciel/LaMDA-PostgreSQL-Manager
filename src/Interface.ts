@@ -35,7 +35,7 @@ export type DBOption = {
 
 
 export const DBDefOption = {
-    encoding       : "gbl",
+    encoding       : "gbk",
     backupMaxCount : 10,
     backupInterval : 1000 * 60 * 60,
 
