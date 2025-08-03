@@ -2,24 +2,24 @@ import path from 'pathe';
 import { PromiseQueue, SLogger, throwError, UtilFT, UtilFunc } from "@zwa73/utils";
 import fs from 'fs';
 import { Pool, PoolClient } from 'pg';
-import { DBPool } from './Pool';
+import { DBInstance } from './Instance';
 import { DBOption, DBDefOption, DBPartialOption } from './Interface';
 
 
 export class DBManager{
     private timer?:NodeJS.Timeout;
-    private dbp!:DBPool;
+    private instance!:DBInstance;
     pool!:Pool;
 
     static async create(partialOption:DBPartialOption){
         const fixedOption   = Object.assign({},DBDefOption,partialOption);
 
         const manager = new DBManager(fixedOption);
-        manager.dbp = await DBPool.start(fixedOption);
+        manager.instance = await DBInstance.start(fixedOption);
 
         const handleExit = (code:number)=>async () => {
             try{
-                await manager.dbp.stop();
+                await manager.instance.stop();
                 SLogger.info('数据库关闭成功');
             }catch(e){
                 SLogger.fatal('数据库关闭失败:', e);
@@ -36,7 +36,7 @@ export class DBManager{
             SLogger.fatal('未捕获的拒绝:', reason);
             await handleExit(1)();
         });
-        manager.pool = manager.dbp.pool;
+        manager.pool = manager.instance.pool;
         manager.autoSave();
         return manager;
     }

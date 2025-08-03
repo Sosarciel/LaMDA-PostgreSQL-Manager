@@ -5,14 +5,14 @@ import * as iconv from "iconv-lite";
 import { DBOption } from "./Interface";
 
 
-export class DBPool{
+export class DBInstance{
     pool:Pool;
 
     private constructor(private option:DBOption,private cp:ChildProcessWithoutNullStreams){
         const {user,port,max,host,idleTimeoutMillis} = option;
         this.pool = new Pool({user,port,max,host,idleTimeoutMillis});
     };
-    static async start (option:DBOption):Promise<DBPool>{
+    static async start (option:DBOption):Promise<DBInstance>{
         const pgProcess = spawn("pg_ctl", ["start", "-D", option.path, "-o", `"-p ${option.port}"`]);
         pgProcess.stdout.on("data", data => {
             const output = iconv.decode(data, option.encoding);// 转换 GBK 为 UTF-8
@@ -29,7 +29,7 @@ export class DBPool{
         });
 
         await sleep(2000);
-        const dbp = new DBPool(option,pgProcess);
+        const dbp = new DBInstance(option,pgProcess);
 
         return new Promise(async resolve=>{
             while (true) {
