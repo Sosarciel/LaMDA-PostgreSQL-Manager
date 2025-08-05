@@ -1,10 +1,24 @@
 import path from 'pathe';
-import { PromiseQueue, SLogger, throwError, UtilFT, UtilFunc } from "@zwa73/utils";
+import { PartialOption, PromiseQueue, SLogger, throwError, UtilFT, UtilFunc } from "@zwa73/utils";
 import fs from 'fs';
 import { Pool, PoolClient } from 'pg';
 import { DBInstance } from './Instance';
 import { DBOption, DBDefOption, DBPartialOption } from './Interface';
 
+type ExecuteFilePartialOpt = PartialOption<ExecuteFileOpt,typeof ExecuteFileDefOpt>;
+type ExecuteFileOpt = {
+    /**使用缓存 默认 true */
+    cache     : boolean;
+    /**若没有后缀则自动添加.sql后缀 默认 true */
+    autosuffix: boolean;
+    /**文件编码 默认utf-8 */
+    encode    : BufferEncoding;
+}
+const ExecuteFileDefOpt = {
+    cache:true,
+    autosuffix:true,
+    encode:'utf-8',
+}
 
 export class DBManager{
     private timer?:NodeJS.Timeout;
@@ -46,6 +60,11 @@ export class DBManager{
     private constructor(private option:DBOption){}
     autoSave(){
         const {backupDir,backupInterval,backupMaxCount} = this.option;
+        if( backupDir == undefined   ||
+            backupInterval < 60_000  ||
+            backupMaxCount < 1
+        ) return;
+
         this.timer = setInterval(async ()=>{
             SLogger.info("开始自动备份数据库");
             const now = new Date();
@@ -113,5 +132,24 @@ export class DBManager{
                 db.release();
             }
         });
+    }
+
+    static executeFileCache:Record<string,string> = {};
+    /**依据路径执行sql文件中的语句
+     * @param filepath sql文件路径 可省略.sql
+     */
+    async executeFile(filepath:string,opt?:ExecuteFilePartialOpt){
+        const fixedOpt = Object.assign({},ExecuteFileDefOpt,opt??{});
+        const {encode,autosuffix,cache} = fixedOpt;
+
+        const fixedPath = (path.extname(filepath) !== ".sql" && autosuffix)
+            ? `${filepath}.sql` : filepath;
+
+        if(cache && DBManager.executeFileCache[fixedPath])
+            return await this.pool.query(DBManager.executeFileCache[fixedPath]);
+
+        const text = await fs.promises.readFile(fixedPath,encode);
+        DBManager.executeFileCache[fixedPath] = text;
+        return await this.pool.query(text);
     }
 }

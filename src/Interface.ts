@@ -8,13 +8,14 @@ export type DBPartialOption = PartialOption<DBOption,typeof DBDefOption>;
 export type DBOption = {
     /**数据库实例所在位置/目录 */
     path            : string;
-    /**备份存放目录 */
-    backupDir       : string;
     /**输出所用编码 默认gbk*/
     encoding        : string;
-    /**自动备份的留存数量 默认 10 */
+
+    /**备份存放目录 默认 无 不进行备份 */
+    backupDir       : string|undefined;
+    /**自动备份的留存数量 默认 10 小于1时不进行备份 */
     backupMaxCount  : number;
-    /**自动备份的间隔时间 默认 1小时 */
+    /**自动备份的间隔时间 毫秒 默认 1小时 小于60秒时不进行备份 */
     backupInterval  : number;
 
     //pool
@@ -35,9 +36,10 @@ export type DBOption = {
 
 
 export const DBDefOption = {
-    encoding       : "gbk",
-    backupMaxCount : 10,
-    backupInterval : 1000 * 60 * 60,
+    encoding          : "gbk",
+    backupDir         : undefined,
+    backupMaxCount    : 10,
+    backupInterval    : 1000 * 60 * 60,
 
     user              : 'postgres' ,
     database          : 'postgres' ,
