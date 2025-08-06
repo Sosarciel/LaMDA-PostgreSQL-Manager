@@ -6,11 +6,11 @@ import { DBOption } from "./Interface";
 
 
 export class DBInstance{
-    pool:Pool;
+    _pool:Pool;
 
     private constructor(private option:DBOption,private cp:ChildProcessWithoutNullStreams){
         const {user,port,max,host,idleTimeoutMillis} = option;
-        this.pool = new Pool({user,port,max,host,idleTimeoutMillis});
+        this._pool = new Pool({user,port,max,host,idleTimeoutMillis});
     };
     static async start (option:DBOption):Promise<DBInstance>{
         const pgProcess = spawn("pg_ctl", ["start", "-D", option.path, "-o", `"-p ${option.port}"`]);
@@ -34,7 +34,7 @@ export class DBInstance{
         return new Promise(async resolve=>{
             while (true) {
                 try {
-                    const client = await dbp.pool.connect();
+                    const client = await dbp._pool.connect();
                     await client.query("SELECT 1");
                     client.release();
                     SLogger.info("✅ PostgreSQL 已启动!");

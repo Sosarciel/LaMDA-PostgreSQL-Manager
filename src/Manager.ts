@@ -1,31 +1,16 @@
 import path from 'pathe';
-import { PartialOption, PromiseQueue, SLogger, throwError, UtilFT, UtilFunc } from "@zwa73/utils";
+import { PromiseQueue, SLogger, throwError, UtilFT, UtilFunc } from "@zwa73/utils";
 import fs from 'fs';
 import { Pool, PoolClient } from 'pg';
 import { DBInstance } from './Instance';
 import { DBOption, DBDefOption, DBPartialOption } from './Interface';
-
-type ExecuteFilePartialOpt = PartialOption<ExecuteFileOpt,typeof ExecuteFileDefOpt>;
-type ExecuteFileOpt = {
-    /**使用缓存 默认 true */
-    cache     : boolean;
-    /**若没有后缀则自动添加.sql后缀 默认 true */
-    autosuffix: boolean;
-    /**文件编码 默认utf-8 */
-    encode    : BufferEncoding;
-    /**指定使用某个连接 */
-    client   ?: PoolClient|Pool;
-}
-const ExecuteFileDefOpt = {
-    cache:true,
-    autosuffix:true,
-    encode:'utf-8',
-}
+import { DBClient } from './Client';
 
 export class DBManager{
     private timer?:NodeJS.Timeout;
     private instance!:DBInstance;
-    pool!:Pool;
+    readonly _pool!:Pool;
+    readonly client!:DBClient<Pool>;
 
     static async create(partialOption:DBPartialOption){
         const fixedOption   = Object.assign({},DBDefOption,partialOption);
@@ -55,11 +40,18 @@ export class DBManager{
         });
         //#endregion
 
-        manager.pool = manager.instance.pool;
+        (manager as any)._pool  = manager.instance._pool;
+        (manager as any).client = new DBClient(manager._pool);
         manager.autoSave();
         return manager;
     }
     private constructor(private option:DBOption){}
+
+    /**获取一个链接 */
+    async connect(){
+        return new DBClient(await this._pool.connect());
+    }
+
     autoSave(){
         const {backupDir,backupInterval,backupMaxCount} = this.option;
         if( backupDir == undefined   ||
@@ -108,9 +100,8 @@ export class DBManager{
         }, backupInterval);
     }
     /**在事物内执行query */
-    async transaction(func:(client:PoolClient)=>Promise<void>){
-        const pool = this.pool;
-        const client = await pool.connect();
+    async transaction(func:(client:DBClient<PoolClient>)=>Promise<void>){
+        const client = await this.connect();
         let pid = '';
         try{
             const result = await client.query('SELECT pg_backend_pid();');
@@ -134,26 +125,5 @@ export class DBManager{
                 client.release();
             }
         });
-    }
-
-    static executeFileCache:Record<string,string> = {};
-    /**依据路径执行sql文件中的语句
-     * @param filepath sql文件路径 可省略.sql
-     */
-    async executeFile(filepath:string,opt?:ExecuteFilePartialOpt){
-        const fixedOpt = Object.assign({},ExecuteFileDefOpt,opt??{});
-        const {encode,autosuffix,cache,client} = fixedOpt;
-
-        const fixedPath = (path.extname(filepath) !== ".sql" && autosuffix)
-            ? `${filepath}.sql` : filepath;
-
-        const fixedClient = client ? client : this.pool;
-
-        if(cache && DBManager.executeFileCache[fixedPath])
-            return await fixedClient.query(DBManager.executeFileCache[fixedPath]);
-
-        const text = await fs.promises.readFile(fixedPath,encode);
-        DBManager.executeFileCache[fixedPath] = text;
-        return await fixedClient.query(text);
     }
 }
