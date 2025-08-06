@@ -13,6 +13,8 @@ type ExecuteFileOpt = {
     autosuffix: boolean;
     /**文件编码 默认utf-8 */
     encode    : BufferEncoding;
+    /**指定使用某个连接 */
+    client   ?: PoolClient|Pool;
 }
 const ExecuteFileDefOpt = {
     cache:true,
@@ -106,30 +108,30 @@ export class DBManager{
         }, backupInterval);
     }
     /**在事物内执行query */
-    async transaction(func:(db:PoolClient)=>Promise<void>){
+    async transaction(func:(client:PoolClient)=>Promise<void>){
         const pool = this.pool;
-        const db = await pool.connect();
+        const client = await pool.connect();
         let pid = '';
         try{
-            const result = await db.query('SELECT pg_backend_pid();');
+            const result = await client.query('SELECT pg_backend_pid();');
             pid = String(result.rows[0].pg_backend_pid);
         } catch(err){
-            db.release();
+            client.release();
             SLogger.error(err);
             throwError("DBAccesser.transaction获取pid失败",'error');
         }
         const flag = `transaction_${pid}`;
         await PromiseQueue.enqueue(flag,async ()=>{
-            await db.query("BEGIN;");
+            await client.query("BEGIN;");
             try{
-                await func(db);
-                await db.query("COMMIT;");
+                await func(client);
+                await client.query("COMMIT;");
             }catch(err){
-                await db.query("ROLLBACK;");
+                await client.query("ROLLBACK;");
                 SLogger.error(err);
                 throwError("DBAccesser.transaction失败",'error');
             }finally{
-                db.release();
+                client.release();
             }
         });
     }
@@ -140,16 +142,18 @@ export class DBManager{
      */
     async executeFile(filepath:string,opt?:ExecuteFilePartialOpt){
         const fixedOpt = Object.assign({},ExecuteFileDefOpt,opt??{});
-        const {encode,autosuffix,cache} = fixedOpt;
+        const {encode,autosuffix,cache,client} = fixedOpt;
 
         const fixedPath = (path.extname(filepath) !== ".sql" && autosuffix)
             ? `${filepath}.sql` : filepath;
 
+        const fixedClient = client ? client : this.pool;
+
         if(cache && DBManager.executeFileCache[fixedPath])
-            return await this.pool.query(DBManager.executeFileCache[fixedPath]);
+            return await fixedClient.query(DBManager.executeFileCache[fixedPath]);
 
         const text = await fs.promises.readFile(fixedPath,encode);
         DBManager.executeFileCache[fixedPath] = text;
-        return await this.pool.query(text);
+        return await fixedClient.query(text);
     }
 }
