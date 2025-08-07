@@ -4,7 +4,6 @@ import { sleep, SLogger } from "@zwa73/utils";
 import * as iconv from "iconv-lite";
 import { DBOption } from "./Interface";
 
-
 export class DBInstance{
     _pool:Pool;
 
@@ -39,7 +38,7 @@ export class DBInstance{
                     client.release();
                     SLogger.info("✅ PostgreSQL 已启动!");
                     resolve(dbp);
-                    return true;
+                    break;
                 } catch (error) {
                     SLogger.info("⏳ PostgreSQL 未启动，重试中...");
                     await sleep(1000);

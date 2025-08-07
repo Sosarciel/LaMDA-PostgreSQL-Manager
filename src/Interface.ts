@@ -8,7 +8,7 @@ export type DBPartialOption = PartialOption<DBOption,typeof DBDefOption>;
 export type DBOption = {
     /**数据库实例所在位置/目录 */
     path            : string;
-    /**输出所用编码 默认gbk*/
+    /**输出所用编码 默认GBK*/
     encoding        : string;
 
     /**备份存放目录 默认 无 不进行备份 */
