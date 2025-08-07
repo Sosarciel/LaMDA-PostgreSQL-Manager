@@ -1,4 +1,4 @@
-import { Pool, PoolClient, QueryConfig, QueryConfigValues, QueryResult, QueryResultRow } from "pg";
+import { Pool, PoolClient } from "pg";
 import SQL from "sql-template";
 import path from 'pathe';
 import { PartialOption } from "@zwa73/utils";
@@ -9,13 +9,13 @@ type ExecuteFileOpt = {
     /**使用缓存 默认 true */
     cache     : boolean;
     /**若没有后缀则自动添加.sql后缀 默认 true */
-    autosuffix: boolean;
+    autoSuffix: boolean;
     /**文件编码 默认utf-8 */
     encode    : BufferEncoding;
 }
 const ExecuteFileDefOpt = {
     cache:true,
-    autosuffix:true,
+    autoSuffix:true,
     encode:'utf-8',
 }
 const ExecuteFileCache:Record<string,string> = {};
@@ -37,11 +37,11 @@ export class DBClient<T extends PoolClient|Pool = PoolClient|Pool>{
     /**依据路径执行sql文件中的语句
      * @param filepath sql文件路径 可省略.sql
      */
-    async call(filepath:string,opt?:ExecuteFilePartialOpt){
+    async runFile(filepath:string,opt?:ExecuteFilePartialOpt){
         const fixedOpt = Object.assign({},ExecuteFileDefOpt,opt??{});
-        const {encode,autosuffix,cache} = fixedOpt;
+        const {encode,autoSuffix,cache} = fixedOpt;
 
-        const fixedPath = (path.extname(filepath) !== ".sql" && autosuffix)
+        const fixedPath = (path.extname(filepath) !== ".sql" && autoSuffix)
             ? `${filepath}.sql` : filepath;
 
         if(cache && ExecuteFileCache[fixedPath])
