@@ -31,12 +31,13 @@ export class DBClient<T extends PoolClient|Pool = PoolClient|Pool>{
 
     /**用模板字符串查询 */
     async sql(...args:Parameters<typeof SQL>){
-        return await this.query(SQL(...args));
+        const {text,values} = SQL(...args);
+        return await this.query(text,values);
     }
     /**依据路径执行sql文件中的语句
      * @param filepath sql文件路径 可省略.sql
      */
-    async execute(filepath:string,opt?:ExecuteFilePartialOpt){
+    async call(filepath:string,opt?:ExecuteFilePartialOpt){
         const fixedOpt = Object.assign({},ExecuteFileDefOpt,opt??{});
         const {encode,autosuffix,cache} = fixedOpt;
 
