@@ -11,6 +11,12 @@ export class DBManager{
     private instance!:DBInstance;
     readonly _pool!:Pool;
     readonly client!:DBClient<Pool>;
+    static debugMode = false;
+
+    /**设置开启debug模式, 打印所有query时间 */
+    static setDebugMode(stat:boolean = true){
+        DBManager.debugMode = stat;
+    }
 
     static async create(partialOption:DBPartialOption){
         const fixedOption   = Object.assign({},DBDefOption,partialOption);

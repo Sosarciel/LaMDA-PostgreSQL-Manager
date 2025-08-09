@@ -1,8 +1,9 @@
 import { Pool, PoolClient } from "pg";
 import SQL from "sql-template";
 import path from 'pathe';
-import { PartialOption } from "@zwa73/utils";
+import { PartialOption, SLogger, UtilFunc } from "@zwa73/utils";
 import fs from 'fs';
+import { DBManager } from "./Manager";
 
 type ExecuteFilePartialOpt = PartialOption<ExecuteFileOpt,typeof ExecuteFileDefOpt>;
 type ExecuteFileOpt = {
@@ -23,8 +24,31 @@ const ExecuteFileCache:Record<string,string> = {};
 export class DBClient<T extends PoolClient|Pool = PoolClient|Pool>{
     constructor(public _client:T){}
 
-    query:T['query']=(...args:any)=>
-        this._client.query.apply(this._client,args) as any;
+    /**查询  
+     * 查询失败时将会抛异并打印查询文本/变量
+     */
+    async query(text:string,values?:any[]){
+        const debugMode = DBManager.debugMode;
+        let flag="";
+        if(debugMode){
+            const valuestxt = values==undefined ? "" :
+                `\nvalues:${values.map(v=>(typeof v=="object" ? UtilFunc.stringifyJToken(v,{compress:true,space:2}) : v))}`;
+            flag = `Client.query:${text}${valuestxt}`;
+            SLogger.time(flag);
+        }
+        try{
+            return await (values!=undefined
+                ? this._client.query(text,values)
+                : this._client.query(text))
+        }
+        catch(err){
+            SLogger.warn("Client.query失败, text:", text, "values:",values);
+            throw err;
+        }
+        finally{
+            if(debugMode) SLogger.timeEnd(flag);
+        }
+    }
 
     release:T extends PoolClient ? T['release'] : never = ((...args:any)=>
         (this._client as any).release.apply(this._client,args)) as any;
