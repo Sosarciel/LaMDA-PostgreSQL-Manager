@@ -12,13 +12,40 @@ const kword = [
     "字段", "类型", "权限",
     "拒绝", "角色", "编码",
     "字符集", "文件", "路径",
-    "函数", "调用"
+    "函数", "调用",
 ];
-const decode = (data:Buffer,def:string)=>{
-    const utf8 = iconv.decode(data, 'utf-8');
-    return kword.some(v=>utf8.includes(v))
-        ? utf8 : iconv.decode(data, def);
+const tryUtf8 = (buf:Buffer)=>{
+    const utf8line = iconv.decode(buf, 'utf-8');
+    if(kword.some(v=>utf8line.includes(v))) return utf8line;
+    // 若出现 � 或往返不等价，则视为非有效 UTF‑8
+    if (utf8line.includes('\uFFFD')) return undefined;
+    return Buffer.from(utf8line, 'utf8').equals(buf)
+        ? utf8line : undefined;
 }
+
+const decode = (data:Buffer,def:string)=>{
+    return splitBufferLines(data)
+    .map(line=>tryUtf8(line) ?? iconv.decode(line, def))
+    .join('\n');
+}
+
+const splitBufferLines = (buf: Buffer): Buffer[] => {
+    const lines: Buffer[] = [];
+    let start = 0;
+    for (let i = 0; i < buf.length; i++) {
+        if (buf[i] === 0x0A) { // '\n'
+            let end = i;
+            if (i > 0 && buf[i - 1] === 0x0D)
+                end -= 1; // '\r\n'
+            lines.push(buf.subarray(start, end));
+            start = i + 1;
+        }
+    }
+    if (start < buf.length)
+        lines.push(buf.subarray(start)); // 剩余部分
+    return lines;
+};
+
 
 export class DBInstance{
     _pool:Pool;
