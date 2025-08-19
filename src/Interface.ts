@@ -1,11 +1,8 @@
-import { PartialOption } from "@zwa73/utils";
+import { preset, PresetFinal, PresetOption } from "@zwa73/utils";
 
 
 
-
-export type DBPartialOption = PartialOption<DBOption,typeof DBDefOption>;
-
-export type DBOption = {
+export const DBOption = preset<{
     /**数据库实例所在位置/目录 */
     path            : string;
     /**输出所用编码 默认GBK*/
@@ -31,11 +28,7 @@ export type DBOption = {
     max     : number;
     /**闲置连接存活时间 默认30秒 */
     idleTimeoutMillis: number;
-}
-
-
-
-export const DBDefOption = {
+}>()({
     encoding          : "gbk",
     backupDir         : undefined,
     backupMaxCount    : 10,
@@ -46,4 +39,7 @@ export const DBDefOption = {
     host              : 'localhost',
     max               : 10         ,
     idleTimeoutMillis : 30000      ,
-}
+} as const);
+
+export type DBPartialOption = PresetOption<typeof DBOption>;
+export type DBOption = PresetFinal<typeof DBOption>;

@@ -3,7 +3,7 @@ import { PromiseQueue, SLogger, throwError, UtilFT, UtilFunc } from "@zwa73/util
 import fs from 'fs';
 import { Pool, PoolClient } from 'pg';
 import { DBInstance } from './Instance';
-import { DBOption, DBDefOption, DBPartialOption } from './Interface';
+import { DBOption, DBPartialOption } from './Interface';
 import { DBClient } from './Client';
 
 export class DBManager{
@@ -19,7 +19,7 @@ export class DBManager{
     }
 
     static async create(partialOption:DBPartialOption){
-        const fixedOption   = Object.assign({},DBDefOption,partialOption);
+        const fixedOption   = DBOption.assign(partialOption);
 
         const manager = new DBManager(fixedOption);
         manager.instance = await DBInstance.start(fixedOption);
