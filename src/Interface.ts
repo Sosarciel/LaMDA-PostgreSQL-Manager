@@ -43,3 +43,23 @@ export const DBOption = preset<{
 
 export type DBPartialOption = PresetOption<typeof DBOption>;
 export type DBOption = PresetFinal<typeof DBOption>;
+
+
+
+
+
+/**半结构化数据行 */
+export type DataRow<T extends Record<string,any>=any> = {
+    order_id:number;
+    data:T;
+}
+
+/**数据库操作通知数据 */
+export type DBOperaNotification<R extends DataRow> = {
+    /**操作类型 */
+    op: 'insert' | 'update' | 'delete';
+    /**表名 */
+    table:string;
+    /**新的行数据 */
+    data:R['data'];
+}

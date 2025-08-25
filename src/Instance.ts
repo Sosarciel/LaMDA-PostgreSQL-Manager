@@ -47,6 +47,7 @@ const splitBufferLines = (buf: Buffer): Buffer[] => {
 };
 
 
+
 export class DBInstance{
     _pool:Pool;
 
@@ -90,7 +91,7 @@ export class DBInstance{
                     resolve(dbp);
                     break;
                 } catch (error) {
-                    SLogger.info("⏳ PostgreSQL 未启动，重试中...");
+                    SLogger.info("⏳ PostgreSQL 未启动, 重试中...");
                     await sleep(1000);
                 }
             }

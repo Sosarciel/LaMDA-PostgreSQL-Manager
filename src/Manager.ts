@@ -8,9 +8,13 @@ import { DBClient } from './Client';
 
 export class DBManager{
     private timer?:NodeJS.Timeout;
+    /**pgsql实例 */
     private instance!:DBInstance;
+    /**连接池 */
     readonly _pool!:Pool;
+    /**通过连接池创建的自动客户端 */
     readonly client!:DBClient<Pool>;
+    /**是否打印查询流程 */
     static debugMode = false;
 
     /**设置开启debug模式, 打印所有query时间 */
