@@ -1,0 +1,125 @@
+import { MPromise, NeedInit, SmartCache } from "@zwa73/js-utils";
+import { DBManager } from "./Manager";
+import { extractOutcome, match } from "@zwa73/utils";
+
+type DBOperation<T extends string,R> = {
+    /**更新行 */
+    op:'update';
+    /**操作表名 */
+    table:T;
+    /**操作行数据 */
+    row:R;
+}|{
+    /**插入行 */
+    op:'insert';
+    /**操作表名 */
+    table:T;
+    /**操作行数据 */
+    row:R;
+}|{
+    /**删除行 */
+    op:'delete';
+    /**操作表名 */
+    table:T;
+};
+
+type DBOperationType = DBOperation<any,any>['op'];
+type CacheKeyTable = Record<string,{key:string,data:any}>;
+type ExtractCacheData<T extends CacheKeyTable,K extends T[keyof T]['key']> = Extract<T[K],{key:T}>['data'];
+type HandlerTable<T extends DBCache<any,any>>= T extends DBCache<infer KT,infer OP>
+    ? {
+        [K in OP['table']]: (cache:DBCache<KT,OP>,op:Extract<OP,{table:K}>)=>MPromise<void>
+    } : never;
+
+class DBCache<
+KT extends CacheKeyTable,
+OP extends DBOperation<any,any>,
+> implements NeedInit {
+    inited: Promise<void>;
+    mgr:DBManager;
+    handler:HandlerTable<DBCache<KT,OP>>;
+    cache:SmartCache<string,KT[keyof KT]>;
+    constructor(arg:{
+        manager:DBManager,
+        handler:HandlerTable<DBCache<KT,OP>>,
+        cache:SmartCache<string,KT[keyof KT]>
+    }){
+        this.inited = this.init();
+        this.mgr = arg.manager;
+        this.handler = arg.handler;
+        this.cache = arg.cache;
+    }
+    async init(){
+        const listener = await this.mgr._pool.connect();
+        await listener.query('LISTEN operation;');
+        // 处理通知
+        listener.on('notification', async msg => {
+            const { channel, payload } = msg;
+            if(channel !== 'operation') return;
+            if(payload == undefined ) return;
+            const notify = JSON.parse(payload) as OP;
+            await this.proc(notify);
+        });
+    }
+    getCache<K extends KT[keyof KT]['key']>(key:K):ExtractCacheData<KT,K>|undefined{
+        return this.cache.get(key) as any;
+    }
+    setCache<K extends KT[keyof KT]['key']>(key:K,value:ExtractCacheData<KT,K>):void{
+        this.cache.set(key,value as any);
+    }
+    peekCache<K extends KT[keyof KT]['key']>(key:K):ExtractCacheData<KT,K>|undefined{
+        return this.cache.peek(key) as any;
+    }
+    removeCache<K extends KT[keyof KT]['key']>(key:K):void{
+        this.cache.remove(key);
+    }
+    proc(op:OP):MPromise<void>{
+        return this.handler[op.table as OP['table']](this,op as any);
+    }
+}
+
+
+type UserDataKey = `user_data user_id:${string}`;
+type MessageKey  = `message message_id:${string}`;
+type ConvKey     = `conversation conversation_id:${string}`;
+type PartKey     = `participation char_id:${string}-thread_id:${string}`;
+type ChoiceKey   = `choice_list conversation_id:${string}-parent_message_id:${string}`;
+
+type CacheTable = {
+    user_data:{
+        key:UserDataKey;
+        data:1;
+    },
+    message:{
+        key:MessageKey;
+        data:2;
+    },
+    conversation:{
+        key:ConvKey;
+        data:3;
+    },
+    participation:{
+        key:PartKey;
+        data:4;
+    },
+    choice_list:{
+        key:ChoiceKey;
+        data:5[];
+    }
+};
+type OP = DBOperation<'message',1>|DBOperation<'conversation',2>|DBOperation<'user_data',3>;
+
+const tdbc = new DBCache<CacheTable,OP>({
+    manager:null as any,
+    handler:{
+        conversation:(cache,opera)=>{
+            const outcome = extractOutcome(opera,'op');
+            match(outcome,{
+                delete:({result})=>result
+            },()=>2);
+        },
+        message:(cache,opera) => {},
+        user_data:(cache,opera) => {},
+    },
+    cache: null as any,
+})
