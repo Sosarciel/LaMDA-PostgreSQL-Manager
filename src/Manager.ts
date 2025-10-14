@@ -16,6 +16,8 @@ export class DBManager{
     readonly client!:DBClient<Pool>;
     /**是否打印查询流程 */
     static debugMode = false;
+    /**正在关闭 */
+    private stoping = false;
 
     /**设置开启debug模式, 打印所有query时间 */
     static setDebugMode(stat:boolean = true){
@@ -30,6 +32,9 @@ export class DBManager{
 
         //#region 处理退出逻辑
         const handleExit = (code:number)=>async () => {
+            if(manager.stoping) return;
+
+            manager.stoping = true;
             try{
                 await manager.instance.stop();
                 SLogger.info('数据库关闭成功');
