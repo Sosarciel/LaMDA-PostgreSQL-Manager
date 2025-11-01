@@ -20,7 +20,7 @@ import {DBManager} from './src';
     const listener = await mgr._pool.connect();
     await listener.query('LISTEN operation;');
     // 处理通知
-    listener.on('notification', async msg => {
+    listener.on('notification', async (msg:any) => {
         const { channel, payload } = msg;
         if(channel !== 'operation') return;
         if(payload == undefined ) return;
