@@ -60,11 +60,16 @@ export class DBManager{
         (manager as any)._pool  = manager.instance._pool;
         (manager as any).client = new DBClient(manager._pool);
         manager.autoSave();
-        await manager.client.runFile(path.join(SQL_DIR,"init_function"));
+        await DBManager.initFunction(manager.client);
         return manager;
     }
 
     private constructor(private option:DBOption){}
+
+    /**初始化基础函数 */
+    static async initFunction(client: DBClient){
+        await client.runFile(path.join(SQL_DIR,"init_function"));
+    }
 
     /**获取一个链接 */
     async connect(){
