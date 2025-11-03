@@ -5,6 +5,7 @@ import { Pool, PoolClient } from 'pg';
 import { DBInstance } from './Instance';
 import { DBOption, DBPartialOption } from './Interface';
 import { DBClient } from './Client';
+import { SQL_DIR } from './Constant';
 
 export class DBManager{
     private timer?:NodeJS.Timeout;
@@ -24,6 +25,7 @@ export class DBManager{
         DBManager.debugMode = stat;
     }
 
+    /**创建一个DBManager 并创建常用函数 */
     static async create(partialOption:DBPartialOption){
         const fixedOption   = DBOption.assign(partialOption);
 
@@ -58,8 +60,10 @@ export class DBManager{
         (manager as any)._pool  = manager.instance._pool;
         (manager as any).client = new DBClient(manager._pool);
         manager.autoSave();
+        await manager.client.runFile(path.join(SQL_DIR,"init_function"));
         return manager;
     }
+
     private constructor(private option:DBOption){}
 
     /**获取一个链接 */
@@ -67,6 +71,7 @@ export class DBManager{
         return new DBClient(await this._pool.connect());
     }
 
+    /**开启自动备份 */
     autoSave(){
         const {backupDir,backupInterval,backupMaxCount} = this.option;
         if( backupDir == undefined   ||
@@ -106,7 +111,7 @@ export class DBManager{
                     await fs.promises.rm(oldestBackup,{recursive:true});
                 }
 
-                await UtilFunc.exec(`pg_basebackup -D ${backupPath} -Ft -Xs -U postgres -p ${this.option.port}`);
+                await UtilFunc.exec(`pg_basebackup -D ${backupPath} -Ft -Xs -U postgres -p ${this.option.port} --compress=gzip`);
                 SLogger.info('数据库备份成功:', backupPath);
             } catch (err) {
                 SLogger.error('数据库备份失败:', err);
@@ -114,6 +119,7 @@ export class DBManager{
 
         }, backupInterval);
     }
+
     /**在事物内执行query */
     async transaction(func:(client:DBClient<PoolClient>)=>Promise<void>){
         const client = await this.connect();

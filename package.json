@@ -1,6 +1,6 @@
 {
 	"name": "@sosraciel-lamda/postgresql-manager",
-	"version": "1.0.30",
+	"version": "1.0.32",
 	"main": "dist/index.js",
 	"scripts": {
 		"test": "jest",
@@ -17,7 +17,8 @@
 	"files": [
 		"dist",
 		"data",
-		"schema"
+		"schema",
+		"sql"
 	],
 	"dependencies": {
 		"@zwa73/js-utils": "^1.0.57",
