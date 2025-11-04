@@ -21,6 +21,8 @@ export class DBManager extends EventSystem<{
     static debugMode = false;
     /**正在关闭 */
     private stoping = false;
+    /**正在关闭 */
+    private exiting = false;
 
     /**设置开启debug模式, 打印所有query时间 */
     static setDebugMode(stat:boolean = true){
@@ -36,7 +38,8 @@ export class DBManager extends EventSystem<{
 
         //#region 处理退出逻辑
         const handleExit = (code:number)=>async () => {
-            if(manager.stoping) return;
+            if(manager.exiting) return;
+            manager.exiting = true;
             await manager.stop();
             process.exit(code);
         };
