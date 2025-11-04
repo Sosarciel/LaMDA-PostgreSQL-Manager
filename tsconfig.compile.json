@@ -3,5 +3,6 @@
         "esModuleInterop": true
     },
     "extends": "./tsconfig.json",
+    "exclude": ["./src/test/**/*.ts"],
     "include": ["./src/**/*.ts"]
 }

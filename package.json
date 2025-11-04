@@ -1,6 +1,6 @@
 {
 	"name": "@sosraciel-lamda/postgresql-manager",
-	"version": "1.0.33",
+	"version": "1.0.34",
 	"main": "dist/index.js",
 	"scripts": {
 		"test": "jest",
@@ -9,7 +9,8 @@
 		"watch": "powershell scripts/watch",
 		"build-schema": "powershell scripts/build-schema",
 		"init": "deepkit-type-install",
-		"expand-macro": "powershell scripts/expand-macro"
+		"expand-macro": "powershell scripts/expand-macro",
+		"start-testdb": "ts-node src/test/starttestdb"
 	},
 	"author": "zwa73",
 	"license": "ISC",

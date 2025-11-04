@@ -80,6 +80,12 @@ OP extends {table:string},
             const notify = JSON.parse(payload) as OP;
             await this.proc(notify);
         });
+        mgr.registerEvent('onstop',{handler:async ()=>{
+            try{
+                listener.removeAllListeners();
+                listener.release();
+            }catch{}
+        }})
     }
     /**获取缓存 */
     getCache<K extends KS['key']>(key:K):ExtractCacheData<KS,K>|undefined{
@@ -121,6 +127,12 @@ OP extends {table:string},
 }
 
 
+/**数据库操作通知 */
+export type DBOperation<T extends string,R> =
+    | { op:'insert'; table:T; new:R;}        // 存在对应键则更新数据
+    | { op:'update'; table:T; new:R; old:R;} // 存在对应键则更新数据
+    | { op:'delete'; table:T; old:R;}        // 删除对应键
+    | { op:'set'   ; table:T; new:R;}        // 存在对应键则更新数据, 不存在者插入数据并触发提升
 
 ///**数据库操作通知数据 */
 //type DBOperationNotify =

@@ -2,7 +2,8 @@
 
 
 
-import {DBManager} from './src';
+import { sleep } from '@zwa73/utils';
+import {DBManager} from '../Manager';
 
 
 
@@ -27,11 +28,18 @@ import {DBManager} from './src';
         const notify = JSON.parse(payload);
         console.log(notify);
     });
+    mgr.registerEvent('onstop',{handler:async ()=>{
+        try{
+        await listener.removeAllListeners();
+        await listener.release();
+        }catch{}
+    }})
     //client.query(`DO $$ BEGIN RAISE EXCEPTION '测试异常输出'; END $$;`);
     try{
         await client.query(`DO $$ BEGIN RAISE NOTICE '测试Notice输出'; END $$;`);
         await client.query(`DO $$ BEGIN RAISE EXCEPTION '测试异常输出'; END $$;`);
-    }catch{
-        client.release();
-    }
+    }catch{ }
+    client.release();
+    await sleep(1000);
+    console.log('readly');
 })();

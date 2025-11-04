@@ -1,5 +1,5 @@
 import path from 'pathe';
-import { PromiseQueue, SLogger, throwError, UtilFT, UtilFunc } from "@zwa73/utils";
+import { EventSystem, MPromise, PromiseQueue, SLogger, throwError, UtilFT, UtilFunc } from "@zwa73/utils";
 import fs from 'fs';
 import { Pool, PoolClient } from 'pg';
 import { DBInstance } from './Instance';
@@ -7,7 +7,9 @@ import { DBOption, DBPartialOption } from './Interface';
 import { DBClient } from './Client';
 import { SQL_DIR } from './Constant';
 
-export class DBManager{
+export class DBManager extends EventSystem<{
+    'onstop':()=>MPromise<void>;
+}>{
     private timer?:NodeJS.Timeout;
     /**pgsql实例 */
     private instance!:DBInstance;
@@ -35,14 +37,7 @@ export class DBManager{
         //#region 处理退出逻辑
         const handleExit = (code:number)=>async () => {
             if(manager.stoping) return;
-
-            manager.stoping = true;
-            try{
-                await manager.instance.stop();
-                SLogger.info('数据库关闭成功');
-            }catch(err){
-                SLogger.fatal('数据库关闭失败:', err);
-            }
+            await manager.stop();
             process.exit(code);
         };
         process.on('SIGTERM', handleExit(0));
@@ -64,7 +59,7 @@ export class DBManager{
         return manager;
     }
 
-    private constructor(private option:DBOption){}
+    private constructor(private option:DBOption){super()}
 
     /**初始化基础函数 */
     static async initFunction(client: DBClient){
@@ -151,5 +146,19 @@ export class DBManager{
                 client.release();
             }
         });
+    }
+
+    /**关闭数据库 */
+    async stop(){
+        if(this.stoping) return;
+        this.stoping = true;
+        if(this.timer) clearInterval(this.timer);
+        try{
+            await this.invokeEvent('onstop');
+            await this.instance.stop();
+            SLogger.info('数据库关闭成功');
+        }catch(err){
+            SLogger.fatal('数据库关闭失败:', err);
+        }
     }
 }

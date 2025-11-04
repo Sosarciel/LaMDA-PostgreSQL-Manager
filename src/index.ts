@@ -3,4 +3,5 @@ export * from './Interface';
 export * from './Instance';
 export * from './UtilDB';
 export * from './Client';
-export * from './DBCacheCoordinator';
+export * from './CacheCoordinator';
+export * from './JsonDataStruct';

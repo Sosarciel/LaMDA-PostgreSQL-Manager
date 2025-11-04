@@ -99,6 +99,13 @@ export class DBInstance{
     };
     async stop() {
         SLogger.info("正在安全关闭 PostgreSQL...");
+
+        try{
+            await this._pool.end();
+        }catch{
+            SLogger.warn("关闭连接池失败");
+        }
+
         const closeProcess = spawn("pg_ctl", ["stop", "-D", this.option.path]);
         return new Promise(resolve=>{
             closeProcess.stdout.on("data", data => {
