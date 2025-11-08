@@ -1,6 +1,6 @@
 {
 	"name": "@sosraciel-lamda/postgresql-manager",
-	"version": "1.0.34",
+	"version": "1.0.40",
 	"main": "dist/index.js",
 	"scripts": {
 		"test": "jest",

@@ -127,7 +127,11 @@ OP extends {table:string},
 }
 
 
-/**数据库操作通知 */
+/**数据库操作通知
+ * @template T 表单id
+ * @template R 移除复杂内容的行快照
+ * @template D 全量行数据
+ */
 export type DBOperation<T extends string,R> =
     | { op:'insert'; table:T; new:R;}        // 存在对应键则更新数据
     | { op:'update'; table:T; new:R; old:R;} // 存在对应键则更新数据
