@@ -120,6 +120,15 @@ OP extends {table:string},
             this.setCache(key,result);
         return result;
     }
+    /**如果键不存在则设置缓存
+     * @param key   - 缓存键
+     * @param value - 缓存值
+     * @returns 缓存数据
+     */
+    setCacheIfNotExist<K extends KS['key'], R extends ExtractCacheData<KS,K>|undefined>(key:K,value:R):void{
+        if(this.hasCache(key)) return;
+        this.setCache(key,value);
+    }
     /**检查缓存是否存在 */
     hasCache<K extends KS['key']>(key:K){
         return this.cache.has(key);
