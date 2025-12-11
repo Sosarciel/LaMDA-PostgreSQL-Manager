@@ -51,7 +51,7 @@ const splitBufferLines = (buf: Buffer): Buffer[] => {
 export class DBInstance{
     _pool:Pool;
 
-    private constructor(private option:DBOption,private cp:ChildProcessWithoutNullStreams){
+    private constructor(private option:DBOption,private cp?:ChildProcessWithoutNullStreams){
         const {user,port,max,host,idleTimeoutMillis} = option;
         this._pool = new Pool({
             user,port,max,host,
@@ -63,20 +63,22 @@ export class DBInstance{
         });
     };
     static async start (option:DBOption):Promise<DBInstance>{
-        const pgProcess = spawn("pg_ctl", ["start", "-D", option.path, "-o", `"-p ${option.port}"`]);
-        pgProcess.stdout.on("data", data => {
-            const output = decode(data, option.encoding);
-            SLogger.info(`PostgreSQL ${output}`);
-        });
-
-        pgProcess.stderr.on("data", data => {
-            const output = decode(data, option.encoding);
-            SLogger.error(`PostgreSQL ${output}`);
-        });
-
-        pgProcess.on("close", code => {
-            SLogger.info(`PostgreSQL close code:${code}`);
-        });
+        let pgProcess:ChildProcessWithoutNullStreams|undefined=undefined;
+        //如果管理实例则创建子进程
+        if(option.path!=undefined){
+            pgProcess = spawn("pg_ctl", ["start", "-D", option.path, "-o", `"-p ${option.port}"`]);
+            pgProcess.stdout.on("data", data => {
+                const output = decode(data, option.encoding);
+                SLogger.info(`PostgreSQL ${output}`);
+            });
+            pgProcess.stderr.on("data", data => {
+                const output = decode(data, option.encoding);
+                SLogger.error(`PostgreSQL ${output}`);
+            });
+            pgProcess.on("close", code => {
+                SLogger.info(`PostgreSQL close code:${code}`);
+            });
+        }
 
         await sleep(2000);
         const dbp = new DBInstance(option,pgProcess);
@@ -105,7 +107,8 @@ export class DBInstance{
         }catch{
             SLogger.warn("关闭连接池失败");
         }
-
+        //如果不管理实例则直接返回
+        if(this.option.path==undefined) return;
         const closeProcess = spawn("pg_ctl", ["stop", "-D", this.option.path]);
         return new Promise(resolve=>{
             closeProcess.stdout.on("data", data => {
@@ -120,7 +123,7 @@ export class DBInstance{
 
             closeProcess.on("close", (code) => {
                 SLogger.info(`ClosePostgreSQL close code:${code}`);
-                this.cp.kill('SIGTERM');
+                this.cp?.kill('SIGTERM');
                 closeProcess.kill('SIGTERM');
                 resolve(true);
             });

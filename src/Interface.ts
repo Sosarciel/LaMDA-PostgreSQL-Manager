@@ -3,8 +3,8 @@ import { preset, PresetFinal, PresetOption } from "@zwa73/utils";
 
 
 export const DBOption = preset<{
-    /**数据库实例所在位置/目录 */
-    path            : string;
+    /**数据库实例所在位置/目录 不填入则不启动pgctl实例 默认无 */
+    path           ?: string;
     /**输出所用编码 默认GBK*/
     encoding        : string;
 
@@ -43,8 +43,7 @@ export const DBOption = preset<{
 
 export type DBPartialOption = PresetOption<typeof DBOption>;
 export type DBOption = PresetFinal<typeof DBOption>;
-
-
+export type HasPathDBOption = DBOption&Required<Pick<DBOption,'path'>>;
 
 
 

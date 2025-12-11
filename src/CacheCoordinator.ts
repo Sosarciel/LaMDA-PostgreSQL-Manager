@@ -1,5 +1,6 @@
 import { MPromise, SmartCache } from "@zwa73/js-utils";
 import { DBManager } from "./Manager";
+import { SLogger } from "@zwa73/utils";
 
 type CacheType = {key:string,data:any};
 type ExtractCacheData<T extends CacheType,K extends CacheType['key']> = Extract<T,{key:K}>['data'];
@@ -70,22 +71,38 @@ OP extends {table:string},
      * @param tarhetChannel - 订阅目标频道
      */
     async subscribeNotify(mgr:DBManager, tarhetChannel:string){
-        const listener = await mgr._pool.connect();
-        await listener.query(`LISTEN ${tarhetChannel};`);
-        // 处理通知
-        listener.on('notification', async msg => {
-            const { channel, payload } = msg;
-            if(channel !== tarhetChannel) return;
-            if(payload == undefined ) return;
-            const notify = JSON.parse(payload) as OP;
-            await this.proc(notify);
-        });
-        mgr.registerEvent('onstop',{handler:async ()=>{
-            try{
-                listener.removeAllListeners();
-                listener.release();
-            }catch{}
-        }})
+        const setupListener = async () => {
+            const listener = await mgr._pool.connect();
+            await listener.query(`LISTEN ${tarhetChannel};`);
+            // 处理通知
+            listener.on('notification', async msg => {
+                const { channel, payload } = msg;
+                if(channel !== tarhetChannel) return;
+                if(payload == undefined ) return;
+                const notify = JSON.parse(payload) as OP;
+                await this.proc(notify);
+            });
+            // 监听错误和结束，触发重连
+            listener.on('error', async err => {
+                if(mgr.exiting || mgr.stoping) return;
+                SLogger.error(`DBCacheCoordinator.subscribeNotify listener错误, 开始重连`,err);
+                try { listener.release(); } catch {}
+                setTimeout(setupListener, 2000); // 延迟重连
+            });
+            listener.on('end', async () => {
+                if(mgr.exiting || mgr.stoping) return;
+                SLogger.warn(`DBCacheCoordinator.subscribeNotify listener断开, 开始重连`);
+                try { listener.release(); } catch {}
+                setTimeout(setupListener, 2000);
+            });
+            mgr.registerEvent('onstop',{handler:async ()=>{
+                try{
+                    listener.removeAllListeners();
+                    listener.release();
+                }catch{}
+            }})
+        }
+        await setupListener();
     }
     /**获取缓存 */
     getCache<K extends KS['key']>(key:K):ExtractCacheData<KS,K>|undefined{

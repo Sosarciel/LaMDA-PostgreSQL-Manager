@@ -19,10 +19,10 @@ export class DBManager extends EventSystem<{
     readonly client!:DBClient<Pool>;
     /**是否打印查询流程 */
     static debugMode = false;
-    /**正在关闭 */
-    private stoping = false;
-    /**正在关闭 */
-    private exiting = false;
+    /**正在关闭pgctl实例 */
+    stoping = false;
+    /**正在退出 */
+    exiting = false;
 
     /**设置开启debug模式, 打印所有query时间 */
     static setDebugMode(stat:boolean = true){
