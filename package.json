@@ -4,11 +4,11 @@
 	"main": "dist/index.js",
 	"scripts": {
 		"test": "jest",
-		"build": "powershell scripts/build",
+		"build": "powershell scripts/pack",
 		"compile": "powershell scripts/compile",
 		"watch": "powershell scripts/watch",
 		"build-schema": "powershell scripts/build-schema",
-		"init": "deepkit-type-install",
+        "pack": "powershell scripts/pack",
 		"expand-macro": "powershell scripts/expand-macro",
 		"start-testdb": "ts-node src/test/starttestdb"
 	},
