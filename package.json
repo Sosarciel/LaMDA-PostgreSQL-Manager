@@ -8,7 +8,6 @@
 		"compile": "powershell scripts/compile",
 		"watch": "powershell scripts/watch",
 		"build-schema": "powershell scripts/build-schema",
-        "pack": "powershell scripts/pack",
 		"expand-macro": "powershell scripts/expand-macro",
 		"start-testdb": "ts-node src/test/starttestdb"
 	},
