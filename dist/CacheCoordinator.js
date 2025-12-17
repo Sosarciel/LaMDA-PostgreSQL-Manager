@@ -1,10 +1,6 @@
-import { MPromise, SmartCache } from "@zwa73/js-utils";
-import { DBManager } from "./Manager";
-import { SLogger } from "@zwa73/utils";
-
-type CacheType = {key:string,data:any};
-type ExtractCacheData<T extends CacheType,K extends CacheType['key']> = Extract<T,{key:K}>['data'];
-
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DBCacheCoordinator = void 0;
 /**数据库缓存协调器
  * 用于连接pgsql的operation频道, 接受一个OP类型的操作通知
  * @template KS - 基于 CacheType 的联合类型 如  { key:`a-${string}`; data:A; } | { key:`b-${string}`;  data:B; }
@@ -53,16 +49,10 @@ type ExtractCacheData<T extends CacheType,K extends CacheType['key']> = Extract<
  * $$;
  * ```
  */
-export class DBCacheCoordinator<
-KS extends CacheType,
-OP extends {table:string},
-> {
-    handler:(cache:DBCacheCoordinator<KS,OP>,op:OP)=>any;
-    cache:SmartCache<KS['key'],KS['data']>;
-    constructor(arg:{
-        handler:(cache:DBCacheCoordinator<KS,OP>,op:OP)=>any,
-        cache:SmartCache<KS['key'],KS['data']>
-    }){
+class DBCacheCoordinator {
+    handler;
+    cache;
+    constructor(arg) {
         this.handler = arg.handler;
         this.cache = arg.cache;
     }
@@ -70,71 +60,59 @@ OP extends {table:string},
      * @param mgr           - 数据库管理器
      * @param tarhetChannel - 订阅目标频道
      */
-    async subscribeNotify(mgr:DBManager, tarhetChannel:string){
-        const setupListener = async () => {
-            const listener = await mgr._pool.connect();
-            await listener.query(`LISTEN ${tarhetChannel};`);
-            // 处理通知
-            listener.on('notification', async msg => {
-                const { channel, payload } = msg;
-                if(channel !== tarhetChannel) return;
-                if(payload == undefined ) return;
-                const notify = JSON.parse(payload) as OP;
-                await this.proc(notify);
-            });
-            // 监听错误和结束，触发重连
-            listener.on('error', async err => {
-                if(mgr.exiting || mgr.stoping) return;
-                SLogger.error(`DBCacheCoordinator.subscribeNotify listener错误, 开始重连`,err);
-                try { listener.release(); } catch {}
-                setTimeout(setupListener, 2000); // 延迟重连
-            });
-            listener.on('end', async () => {
-                if(mgr.exiting || mgr.stoping) return;
-                SLogger.warn(`DBCacheCoordinator.subscribeNotify listener断开, 开始重连`);
-                try { listener.release(); } catch {}
-                setTimeout(setupListener, 2000);
-            });
-            mgr.registerEvent('onstop',{handler:async ()=>{
-                try{
+    async subscribeNotify(mgr, tarhetChannel) {
+        const listener = await mgr._pool.connect();
+        await listener.query(`LISTEN ${tarhetChannel};`);
+        // 处理通知
+        listener.on('notification', async (msg) => {
+            const { channel, payload } = msg;
+            if (channel !== tarhetChannel)
+                return;
+            if (payload == undefined)
+                return;
+            const notify = JSON.parse(payload);
+            await this.proc(notify);
+        });
+        mgr.registerEvent('onstop', { handler: async () => {
+                try {
                     listener.removeAllListeners();
                     listener.release();
-                }catch{}
-            }})
-        }
-        await setupListener();
+                }
+                catch { }
+            } });
     }
     /**获取缓存 */
-    getCache<K extends KS['key']>(key:K):ExtractCacheData<KS,K>|undefined{
-        return this.cache.get(key) as any;
+    getCache(key) {
+        return this.cache.get(key);
     }
     /**设置缓存 */
-    setCache<K extends KS['key']>(key:K,value:ExtractCacheData<KS,K>):void{
-        this.cache.set(key,value as any);
+    setCache(key, value) {
+        this.cache.set(key, value);
     }
     /**检视缓存, 不触发提升 */
-    peekCache<K extends KS['key']>(key:K):ExtractCacheData<KS,K>|undefined{
-        return this.cache.peek(key) as any;
+    peekCache(key) {
+        return this.cache.peek(key);
     }
     /**移除缓存 */
-    removeCache<K extends KS['key']>(key:K):void{
+    removeCache(key) {
         this.cache.remove(key);
     }
     /**处理通知 */
-    proc(op:OP):MPromise<void>{
-        return this.handler(this,op);
+    proc(op) {
+        return this.handler(this, op);
     }
     /**尝试获取缓存, 如果不存在则以func的结果设置缓存, 返回undefined时不做处理
      * @param key  - 缓存键
      * @param func - 缓存不存在时执行的函数
      * @returns 缓存数据
      */
-    async getOrSetCache<K extends KS['key'], R extends ExtractCacheData<KS,K>|undefined>(key:K,func:()=>MPromise<R>):Promise<R>{
+    async getOrSetCache(key, func) {
         const cache = this.getCache(key);
-        if(cache!=undefined) return cache;
+        if (cache != undefined)
+            return cache;
         const result = await func();
-        if(result!=undefined)
-            this.setCache(key,result);
+        if (result != undefined)
+            this.setCache(key, result);
         return result;
     }
     /**如果键不存在则设置缓存
@@ -142,28 +120,17 @@ OP extends {table:string},
      * @param value - 缓存值
      * @returns 缓存数据
      */
-    setCacheIfNotExist<K extends KS['key'], R extends ExtractCacheData<KS,K>|undefined>(key:K,value:R):void{
-        if(this.hasCache(key)) return;
-        this.setCache(key,value);
+    setCacheIfNotExist(key, value) {
+        if (this.hasCache(key))
+            return;
+        this.setCache(key, value);
     }
     /**检查缓存是否存在 */
-    hasCache<K extends KS['key']>(key:K){
+    hasCache(key) {
         return this.cache.has(key);
     }
 }
-
-
-/**数据库操作通知
- * @template T 表单id
- * @template R 移除复杂内容的行快照
- * @template D 全量行数据
- */
-export type DBOperation<T extends string,R> =
-    | { op:'insert'; table:T; new:R;}        // 存在对应键则更新数据
-    | { op:'update'; table:T; new:R; old:R;} // 存在对应键则更新数据
-    | { op:'delete'; table:T; old:R;}        // 删除对应键
-    | { op:'set'   ; table:T; new:R;}        // 存在对应键则更新数据, 不存在者插入数据并触发提升
-
+exports.DBCacheCoordinator = DBCacheCoordinator;
 ///**数据库操作通知数据 */
 //type DBOperationNotify =
 //DBOperation<'message'       ,1>       |
