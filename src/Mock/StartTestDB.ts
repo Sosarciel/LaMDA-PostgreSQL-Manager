@@ -5,11 +5,11 @@
 import { sleep } from '@zwa73/utils';
 import { DBManager } from '../Manager';
 
-
+const MockDBInstance ="F:/Sosarciel/TestDB";
 
 (async ()=>{
     const mgr = await DBManager.create({
-        path:"F:/Sosarciel/TestDB",
+        path:MockDBInstance,
         port:5433,
         user: 'postgres',
         database: 'postgres',

@@ -9,7 +9,7 @@
 		"watch": "powershell scripts/watch",
 		"build-schema": "powershell scripts/build-schema",
 		"expand-macro": "powershell scripts/expand-macro",
-		"start-testdb": "ts-node src/test/starttestdb"
+		"start-testdb": "ts-node src/Mock/StartTestDB"
 	},
 	"author": "zwa73",
 	"license": "ISC",
