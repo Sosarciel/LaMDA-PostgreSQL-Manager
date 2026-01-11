@@ -21,8 +21,8 @@
 		"sql"
 	],
 	"dependencies": {
-		"@zwa73/js-utils": "^1.0.57",
-		"@zwa73/utils": "^1.0.234",
+		"@zwa73/js-utils": "^1.0.74",
+		"@zwa73/utils": "^1.0.280",
 		"iconv-lite": "^0.6.3",
 		"pg": "^8.15.6",
 		"sql-template": "^1.3.2"

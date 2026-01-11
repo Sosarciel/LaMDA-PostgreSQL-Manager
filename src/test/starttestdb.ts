@@ -3,7 +3,7 @@
 
 
 import { sleep } from '@zwa73/utils';
-import {DBManager} from '../Manager';
+import { DBManager } from '../Manager';
 
 
 
