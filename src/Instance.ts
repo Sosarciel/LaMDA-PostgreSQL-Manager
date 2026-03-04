@@ -99,6 +99,9 @@ export class DBInstance{
             }
         });
     };
+    /**关闭连接池与实例
+     * @returns 是否真实关闭数据库实例
+     */
     async stop() {
         SLogger.info("正在安全关闭 PostgreSQL...");
 
@@ -108,9 +111,12 @@ export class DBInstance{
             SLogger.warn("关闭连接池失败");
         }
         //如果不管理实例则直接返回
-        if(this.option.path==undefined) return;
+        if(this.option.path==undefined) {
+            SLogger.info('未托管数据库实例, 数据库连接池关闭成功');
+            return false;
+        }
         const closeProcess = spawn("pg_ctl", ["stop", "-D", this.option.path]);
-        return new Promise(resolve=>{
+        return new Promise<boolean>(resolve=>{
             closeProcess.stdout.on("data", data => {
                 const output = decode(data, this.option.encoding);// 转换 GBK 为 UTF-8
                 SLogger.info(`ClosePostgreSQL ${output}`);
@@ -125,6 +131,7 @@ export class DBInstance{
                 SLogger.info(`ClosePostgreSQL close code:${code}`);
                 this.cp?.kill('SIGTERM');
                 closeProcess.kill('SIGTERM');
+                SLogger.info('数据库关闭成功');
                 resolve(true);
             });
         });

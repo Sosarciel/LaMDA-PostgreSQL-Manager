@@ -156,12 +156,11 @@ export class DBManager extends EventSystem<{
         if(this.stoping) return;
         this.stoping = true;
         if(this.timer) clearInterval(this.timer);
-        try{
-            await this.invokeEvent('onstop');
-            await this.instance.stop();
-            SLogger.info('数据库关闭成功');
-        }catch(err){
-            SLogger.fatal('数据库关闭失败:', err);
-        }
+
+        try{ await this.invokeEvent('onstop'); }
+        catch(err){ SLogger.fatal('onstop事件触发失败:', err); }
+
+        try{ await this.instance.stop(); }
+        catch(err){ SLogger.fatal('数据库关闭失败:', err); }
     }
 }
