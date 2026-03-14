@@ -79,4 +79,39 @@ BEGIN
 END;
 $$;
 
+-- 与js端相等的stringify
+DROP FUNCTION IF EXISTS canonical_jsonb_text;
+CREATE OR REPLACE FUNCTION canonical_jsonb_text(j jsonb)
+RETURNS text AS $$
+DECLARE
+    key text;
+    val jsonb;
+    parts text[] := '{}'::text[];
+BEGIN
+    IF jsonb_typeof(j) = 'object' THEN
+        -- 使用 COLLATE "C" 确保按照字节 (ASCII) 排序，对齐 JS 的 sort()
+        FOR key, val IN SELECT d.key, d.value FROM jsonb_each(j) d ORDER BY d.key COLLATE "C" LOOP
+            parts := array_append(parts, to_jsonb(key)::text || ':' || canonical_jsonb_text(val));
+        END LOOP;
+        RETURN '{' || array_to_string(parts, ',') || '}';
+    ELSIF jsonb_typeof(j) = 'array' THEN
+        FOR val IN SELECT * FROM jsonb_array_elements(j) LOOP
+            parts := array_append(parts, canonical_jsonb_text(val));
+        END LOOP;
+        RETURN '[' || array_to_string(parts, ',') || ']';
+    ELSE
+        -- 处理字符串、数字、布尔值 (自带的 ::text 转换已经完美契合 JS 格式)
+        RETURN j::text;
+    END IF;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- 稳定的hash计算函数
+DROP FUNCTION IF EXISTS stable_jsonb_hash;
+CREATE OR REPLACE FUNCTION stable_jsonb_hash(j jsonb)
+RETURNS text AS $$
+BEGIN
+    RETURN md5(canonical_jsonb_text(j));
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
 
