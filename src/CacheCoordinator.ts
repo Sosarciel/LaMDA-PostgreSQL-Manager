@@ -7,7 +7,7 @@ type CacheEntry =
     | {key:string,struct:any}
     | {key:string,struct:any,notify:DBOperation<string,unknown>};
 
-type ExtData<T extends CacheEntry,K extends CacheEntry['key']> = Extract<T,{key:K}>['struct'];
+type ExtStruct<T extends CacheEntry,K extends CacheEntry['key']> = Extract<T,{key:K}>['struct'];
 type ExtNotify<T extends CacheEntry> = Extract<T,{notify:unknown}>['notify'];
 
 /**数据库操作通知
@@ -93,10 +93,14 @@ export class DBCacheCoordinator<
                 const { channel, payload } = msg;
                 if(channel !== tarhetChannel) return;
                 if(payload == undefined ) return;
-                const notify = JSON.parse(payload) as ExtNotify<SET>;
-                this.proc(notify);
+                try{
+                    const notify = JSON.parse(payload) as ExtNotify<SET>;
+                    await this.proc(notify);
+                }catch(err){
+                    SLogger.error(`DBCacheCoordinator.subscribeNotify 处理通知失败`,err);
+                }
             });
-            // 监听错误和结束，触发重连
+            // 监听错误和结束, 触发重连
             listener.on('error', async err => {
                 if(mgr.exiting || mgr.stoping) return;
                 SLogger.error(`DBCacheCoordinator.subscribeNotify listener错误, 开始重连`,err);
@@ -119,15 +123,15 @@ export class DBCacheCoordinator<
         await setupListener();
     }
     /**获取缓存 */
-    getCache<K extends SET['key']>(key:K):ExtData<SET,K>|undefined{
+    getCache<K extends SET['key']>(key:K):ExtStruct<SET,K>|undefined{
         return this.cache.get(key) as any;
     }
     /**设置缓存 */
-    setCache<K extends SET['key']>(key:K,value:ExtData<SET,K>):void{
+    setCache<K extends SET['key']>(key:K,value:ExtStruct<SET,K>):void{
         this.cache.set(key,value as any);
     }
     /**检视缓存, 不触发提升 */
-    peekCache<K extends SET['key']>(key:K):ExtData<SET,K>|undefined{
+    peekCache<K extends SET['key']>(key:K):ExtStruct<SET,K>|undefined{
         return this.cache.peek(key) as any;
     }
     /**移除缓存 */
@@ -145,7 +149,7 @@ export class DBCacheCoordinator<
      * @param func - 缓存不存在时执行的函数
      * @returns 缓存数据
      */
-    async getOrSetCache<K extends SET['key'], R extends ExtData<SET,K>|undefined>(key:K,func:()=>MPromise<R>):Promise<R>{
+    async getOrSetCache<K extends SET['key'], R extends ExtStruct<SET,K>|undefined>(key:K,func:()=>MPromise<R>):Promise<R>{
         const cache = this.getCache(key);
         if(cache!=undefined) return cache;
         const result = await func();
@@ -158,7 +162,7 @@ export class DBCacheCoordinator<
      * @param value - 缓存值
      * @returns 缓存数据
      */
-    setCacheIfNotExist<K extends SET['key'], R extends ExtData<SET,K>|undefined>(key:K,value:R):void{
+    setCacheIfNotExist<K extends SET['key'], R extends ExtStruct<SET,K>|undefined>(key:K,value:R):void{
         if(this.hasCache(key)) return;
         this.setCache(key,value);
     }
@@ -187,6 +191,7 @@ type JsonCacheEntry =
     | {key:string,struct:DBJsonDataStruct<unknown>,notify:DBOperation<string,DBJsonDataStruct<unknown>>};
 
 /**针对单列json数据的缓存协调器
+ * 将会依照option以 weight=0 的事件自动处理标准行缓存
  * 需配合 DBJsonDataStruct 与 jsonb_merge_and_clean BEFORE 触发器
  * 确保sql处理data列时, 浅层合并, undefined 为忽略 null 为删除(合并后jsonb_strip_nulls), 浅层不存储null
  */
@@ -201,6 +206,7 @@ SET extends JsonCacheEntry,
     }){
         super(arg);
         this.option = arg.option;
+        // 注册标准行缓存
         this.inited = ivk(async ()=>{
             for(const table in this.option.table){
                 const tableName = table as ExtNotify<SET>['table'];
@@ -212,7 +218,7 @@ SET extends JsonCacheEntry,
                         const lastRow = ('new' in notify) ? notify.new : notify.old;
                         const key = await fixedOpt.getKey(lastRow);
 
-                        await this.procEvent(key, notify);
+                        await this.procStandardEvent(key, notify);
                     }
                 })
             }
@@ -239,16 +245,20 @@ SET extends JsonCacheEntry,
             cacheData.data.data_hash === lastRow.data?.data_hash
         ) return;
 
-        // @ts-ignore 因为泛型函数的动态调用，TS 很难完美匹配 this.invokeEvent 的联合类型，这里可以用 ts-ignore 豁免
+        // @ts-ignore 因为泛型函数的动态调用, TS 很难完美匹配 this.invokeEvent 的联合类型, 这里可以用 ts-ignore 豁免
         await this.invokeEvent(notify.table, { coordinator: this, notify });
         // @ts-ignore
-        await this.invokeEvent('onNotify', { coordinator: this, notify });
+        await this.invokeEvent('onNotify'  , { coordinator: this, notify });
     }
 
+    /**处理标准行缓存
+     * @param key - 缓存键
+     * @param notify - 通知
+     */
     @AwaitInited
-    async procEvent<K extends SET['key']>(
+    async procStandardEvent<K extends SET['key']>(
         key: K,
-        notify: Extract<ExtNotify<SET>, { table: any }> // 直接传入原始 Notify，利用内部 match 解构
+        notify: Extract<ExtNotify<SET>, { table: any }> // 直接传入原始 Notify, 利用内部 match 解构
     ): Promise<void> {
         const tableName = notify.table as keyof DBJsonDataCacheCoordinatorOption<SET>['table'];
         const fixedOpt = this.option.table[tableName];
@@ -277,7 +287,7 @@ SET extends JsonCacheEntry,
         });
 
         if (newdata == undefined) return;
-        assertType<ExtData<SET, K>>(newdata);
+        assertType<ExtStruct<SET, K>>(newdata);
         assertType<Exclude<ExtNotify<SET>,{op:'delete'}>>(notify);
 
         match(notify.op, {
@@ -289,15 +299,20 @@ SET extends JsonCacheEntry,
         });
     }
 
+    /**尝试更新某个缓存
+     * @param key     - 缓存键
+     * @param newdata - 新数据
+     * @param isSet   - 是否为set操作, set操作将会在本地额外运行一次 jsonb_merge_and_clean 模拟数据库行为, 其他操作视为完全同步
+     */
     async tryUpdateCache<K extends SET['key']>(
         key: K,
-        newdata: ExtData<SET, K>,
+        newdata: ExtStruct<SET, K>,
         isSet = false
     ) {
         const cacheData = this.cache.peek(key);
         if (cacheData == undefined) return;
 
-        // 因为 DBJsonDataStruct 是 DeepReadonly，在内部执行变异时，我们显式转为字典态进行安全操作
+        // 因为 DBJsonDataStruct 是 DeepReadonly, 在内部执行变异时, 我们显式转为字典态进行安全操作
         const targetData = cacheData.data as Record<string, unknown>;
         const sourceData = newdata.data as Record<string, unknown>;
 
