@@ -1,10 +1,14 @@
 import { EventSystem, MPromise, SmartCache } from "@zwa73/js-utils";
 import { DBManager } from "./Manager";
 import { SLogger } from "@zwa73/utils";
+import { DBJsonDataStruct } from "./JsonDataStruct";
 
-type CacheType = {key:string,data:any};
-type ExtractCacheData<T extends CacheType,K extends CacheType['key']> = Extract<T,{key:K}>['data'];
+type CacheEntry =
+    | {key:string,data:any}
+    | {key:string,data:any,notify:DBOperation<string,unknown>};
 
+type ExtData<T extends CacheEntry,K extends CacheEntry['key']> = Extract<T,{key:K}>['data'];
+type ExtOP<T extends CacheEntry> = Extract<T,{notify:unknown}>['notify'];
 /**数据库操作通知
  * @template T 表单id
  * @template R 移除复杂内容的行快照
@@ -18,14 +22,9 @@ export type DBOperation<T extends string,R> =
 
 /**数据库缓存协调器
  * 用于连接pgsql的operation频道, 接受一个OP类型的操作通知
- * @template KS - 基于 CacheType 的联合类型 如  { key:`a-${string}`; data:A; } | { key:`b-${string}`;  data:B; }
+ * @template SET - 基于 CacheType 的联合类型 如  { key:`a-${string}`; data:A; } | { key:`b-${string}`;  data:B; }
  * @template OP - 数据库操作通知集, 必须在pgsql设置对应格式的notification, 并使用subscribeNotify订阅对应频道
  * @example ```typescript
- * type DBOperation<T extends string,R> =
- *     | { op:'insert'; table:T; new:R;}
- *     | { op:'update'; table:T; new:R; old:R;}
- *     | { op:'delete'; table:T; old:R;}
- *     | { op:'set'   ; table:T; new:R;}
  * type DBOperationNotify =
  *     | DBOperation<'message'       , MessageDbRow>
  *     | DBOperation<'conversation'  , ConversationDbRow>
@@ -65,19 +64,18 @@ export type DBOperation<T extends string,R> =
  * ```
  */
 export class DBCacheCoordinator<
-KS extends CacheType,
-OP extends {table:string},
-> extends EventSystem<{[K in OP['table']]:(arg:{
-    coordinator:DBCacheCoordinator<KS,OP>,
-    op:Extract<OP,{table:K}>
+    SET extends CacheEntry
+> extends EventSystem<{[K in ExtOP<SET>['table']]:(arg:{
+    coordinator:DBCacheCoordinator<SET>,
+    op:Extract<ExtOP<SET>,{table:K}>
 })=>MPromise<void>}&{
     onNotify:(arg:{
-        coordinator:DBCacheCoordinator<KS,OP>,
-        op:OP
+        coordinator:DBCacheCoordinator<SET>,
+        op:ExtOP<SET>
     })=>MPromise<void>;
 }>{
-    cache:SmartCache<KS['key'],KS['data']>;
-    constructor(arg:{ cache:SmartCache<KS['key'],KS['data']> }){
+    cache:SmartCache<SET['key'],SET['data']>;
+    constructor(arg:{ cache:SmartCache<SET['key'],SET['data']> }){
         super();
         this.cache = arg.cache;
     }
@@ -94,7 +92,7 @@ OP extends {table:string},
                 const { channel, payload } = msg;
                 if(channel !== tarhetChannel) return;
                 if(payload == undefined ) return;
-                const notify = JSON.parse(payload) as OP;
+                const notify = JSON.parse(payload) as ExtOP<SET>;
                 this.proc(notify);
             });
             // 监听错误和结束，触发重连
@@ -116,28 +114,28 @@ OP extends {table:string},
                     listener.release();
                 }catch{}
             }})
-        } 
+        }
         await setupListener();
     }
     /**获取缓存 */
-    getCache<K extends KS['key']>(key:K):ExtractCacheData<KS,K>|undefined{
+    getCache<K extends SET['key']>(key:K):ExtData<SET,K>|undefined{
         return this.cache.get(key) as any;
     }
     /**设置缓存 */
-    setCache<K extends KS['key']>(key:K,value:ExtractCacheData<KS,K>):void{
+    setCache<K extends SET['key']>(key:K,value:ExtData<SET,K>):void{
         this.cache.set(key,value as any);
     }
     /**检视缓存, 不触发提升 */
-    peekCache<K extends KS['key']>(key:K):ExtractCacheData<KS,K>|undefined{
+    peekCache<K extends SET['key']>(key:K):ExtData<SET,K>|undefined{
         return this.cache.peek(key) as any;
     }
     /**移除缓存 */
-    removeCache<K extends KS['key']>(key:K):void{
+    removeCache<K extends SET['key']>(key:K):void{
         this.cache.remove(key);
     }
     /**处理通知 */
-    async proc(op:OP):Promise<void>{
-        await (this.invokeEvent as any)(op.table, ({ coordinator:this, op }));
+    async proc(op:ExtOP<SET>):Promise<void>{
+        await (this.invokeEvent as any)(op.table  ,({ coordinator:this, op }));
         await (this.invokeEvent as any)('onNotify',({ coordinator:this, op }));
         return
     }
@@ -146,7 +144,7 @@ OP extends {table:string},
      * @param func - 缓存不存在时执行的函数
      * @returns 缓存数据
      */
-    async getOrSetCache<K extends KS['key'], R extends ExtractCacheData<KS,K>|undefined>(key:K,func:()=>MPromise<R>):Promise<R>{
+    async getOrSetCache<K extends SET['key'], R extends ExtData<SET,K>|undefined>(key:K,func:()=>MPromise<R>):Promise<R>{
         const cache = this.getCache(key);
         if(cache!=undefined) return cache;
         const result = await func();
@@ -159,29 +157,54 @@ OP extends {table:string},
      * @param value - 缓存值
      * @returns 缓存数据
      */
-    setCacheIfNotExist<K extends KS['key'], R extends ExtractCacheData<KS,K>|undefined>(key:K,value:R):void{
+    setCacheIfNotExist<K extends SET['key'], R extends ExtData<SET,K>|undefined>(key:K,value:R):void{
         if(this.hasCache(key)) return;
         this.setCache(key,value);
     }
     /**检查缓存是否存在 */
-    hasCache<K extends KS['key']>(key:K){
+    hasCache<K extends SET['key']>(key:K){
         return this.cache.has(key);
     }
 }
 
 
-
-type DBJsonDataCacheCoordinatorOption = {
-
+type LastRow<T extends DBOperation<string,any>> = Extract<T,{new:any}>['new']|Extract<T,{old:any}>['old'];
+export type DBJsonDataCacheCoordinatorOption<SET extends CacheEntry>= {
+    table:{[K in ExtOP<SET>['table']]?:{
+        getKey:(row:LastRow<Extract<SET,{notify:{table:K}}>['notify']>)=>Extract<SET,{notify:{table:K}}>['key']
+    }},
 }
+
+
+type JsonCacheEntry =
+    | {key:string,data:DBJsonDataStruct<unknown>}
+    | {key:string,data:DBJsonDataStruct<unknown>,notify:DBOperation<string,DBJsonDataStruct<unknown>>};
+
 /**针对单列json数据的缓存协调器 */
-class DBJsonDataCacheCoordinator<
-KS extends CacheType,
-OP extends {table:string},
-> extends DBCacheCoordinator<KS,OP>{
+export class DBJsonDataCacheCoordinator<
+SET extends JsonCacheEntry,
+OPT extends DBJsonDataCacheCoordinatorOption<SET>,
+> extends DBCacheCoordinator<SET>{
+    option:OPT;
     constructor(arg:{
-        cache:SmartCache<KS['key'],KS['data']>
+        option:OPT,
+        cache:SmartCache<SET['key'],SET['data']>
     }){
         super(arg);
+        this.option = arg.option;
+    }
+    override async proc(op: ExtOP<SET>): Promise<void> {
+        const fixedOpt = (this.option.table as any)[op.table];
+        if(fixedOpt==undefined){
+            SLogger.warn(`DBJsonDataCacheCoordinator.proc 错误 未配置表单${op.table}`);
+            return;
+        }
+        const lastRow = ('new' in op) ? op.new : op.old;
+        const cacheData = this.cache.peek(fixedOpt.getKey(lastRow)) as any as DBJsonDataStruct<unknown>|undefined
+        if(cacheData?.data.data_hash == lastRow.data.data_hash) return;
+
+        await (this.invokeEvent as any)(op.table  ,({ coordinator:this, op }));
+        await (this.invokeEvent as any)('onNotify',({ coordinator:this, op }));
+        return;
     }
 }
