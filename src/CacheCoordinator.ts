@@ -1,4 +1,4 @@
-import { EventSystem, MPromise, NeedInit, SmartCache } from "@zwa73/js-utils";
+import { AwaitInited, EventSystem, MPromise, NeedInit, SmartCache } from "@zwa73/js-utils";
 import { DBManager } from "./Manager";
 import { assertType, ivk, match, SLogger } from "@zwa73/utils";
 import { DBJsonDataStruct } from "./JsonDataStruct";
@@ -187,7 +187,8 @@ type JsonCacheEntry =
     | {key:string,struct:DBJsonDataStruct<unknown>,notify:DBOperation<string,DBJsonDataStruct<unknown>>};
 
 /**针对单列json数据的缓存协调器
- * 需配合 DBJsonDatay 与 jsonb_merge_and_clean BEFORE 触发器
+ * 需配合 DBJsonDataStruct 与 jsonb_merge_and_clean BEFORE 触发器
+ * 确保sql处理data列时, 浅层合并, undefined 为忽略 null 为删除(合并后jsonb_strip_nulls), 浅层不存储null
  */
 export class DBJsonDataCacheCoordinator<
 SET extends JsonCacheEntry,
@@ -217,6 +218,8 @@ SET extends JsonCacheEntry,
             }
         });
     }
+
+    @AwaitInited
     override async proc(notify: ExtNotify<SET>): Promise<void> {
         const tableName = notify.table as keyof DBJsonDataCacheCoordinatorOption<SET>['table'];
         const fixedOpt = this.option.table[tableName];
@@ -242,6 +245,7 @@ SET extends JsonCacheEntry,
         await this.invokeEvent('onNotify', { coordinator: this, notify });
     }
 
+    @AwaitInited
     async procEvent<K extends SET['key']>(
         key: K,
         notify: Extract<ExtNotify<SET>, { table: any }> // 直接传入原始 Notify，利用内部 match 解构
@@ -258,8 +262,8 @@ SET extends JsonCacheEntry,
             // delete 无需unwarp全量数据 直接返回
             delete: () => void this.cache.remove(key),
             // 若为快照, 不主动拉取新数据维护 直接返回
-            insert: async () => (await fixedOpt.isSnapshot(notify as any)) ? this.cache.remove(key) : fixedOpt.unwarp(notify as any),
-            update: async () => (await fixedOpt.isSnapshot(notify as any)) ? this.cache.remove(key) : fixedOpt.unwarp(notify as any),
+            insert: async () => (await fixedOpt?.isSnapshot(notify as any)) ? this.cache.remove(key) : fixedOpt.unwarp(notify as any),
+            update: async () => (await fixedOpt?.isSnapshot(notify as any)) ? this.cache.remove(key) : fixedOpt.unwarp(notify as any),
             // 主动set一定触发完整解包
             set: async () => {
                 const unwarpedData = await fixedOpt.unwarp(notify as any);
