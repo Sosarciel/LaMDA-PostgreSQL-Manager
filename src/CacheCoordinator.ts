@@ -290,7 +290,7 @@ SET extends JsonCacheEntry,
         assertType<ExtStruct<SET, K>>(newdata);
         assertType<Exclude<ExtNotify<SET>,{op:'delete'}>>(notify);
 
-        match(notify.op, {
+        await match(notify.op, {
             insert: () => this.tryUpdateCache(key, newdata),
             update: () => this.tryUpdateCache(key, newdata),
             set: () => this.cache.has(key)
