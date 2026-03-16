@@ -178,7 +178,9 @@ export type DBJsonDataCacheCoordinatorOption<SET extends CacheEntry>= {
     table:{[K in ExtNotify<SET>['table']]?:{
         /**获取缓存键 */
         getKey:(row:LastRow<Extract<SET,{notify:{table:K}}>['notify']>)=>MPromise<Extract<SET,{notify:{table:K}}>['key']>,
-        /**解包通知为行数据, 如果是快照则直接从数据库拉取全量数据 */
+        /**解包通知为行数据
+         * 如果是快照则应该在此直接从数据库拉取全量数据
+         */
         unwarp:(row:LastRow<Extract<SET,{notify:{table:K}}>['notify']>)=>MPromise<Extract<SET,{notify:{table:K}}>['struct']>,
         /**判断是否需要从数据库拉取全量数据 */
         isSnapshot:(row:LastRow<Extract<SET,{notify:{table:K}}>['notify']>)=>MPromise<boolean>,
