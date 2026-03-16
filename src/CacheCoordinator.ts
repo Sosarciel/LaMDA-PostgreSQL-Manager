@@ -1,9 +1,20 @@
-import { MPromise, SmartCache } from "@zwa73/js-utils";
+import { EventSystem, MPromise, SmartCache } from "@zwa73/js-utils";
 import { DBManager } from "./Manager";
 import { SLogger } from "@zwa73/utils";
 
 type CacheType = {key:string,data:any};
 type ExtractCacheData<T extends CacheType,K extends CacheType['key']> = Extract<T,{key:K}>['data'];
+
+/**数据库操作通知
+ * @template T 表单id
+ * @template R 移除复杂内容的行快照
+ * @template D 全量行数据
+ */
+export type DBOperation<T extends string,R> =
+    | { op:'insert'; table:T; new:R;}        // 存在对应键则更新数据
+    | { op:'update'; table:T; new:R; old:R;} // 存在对应键则更新数据
+    | { op:'delete'; table:T; old:R;}        // 删除对应键
+    | { op:'set'   ; table:T; new:R;}        // 存在对应键则更新数据, 不存在者插入数据并触发提升
 
 /**数据库缓存协调器
  * 用于连接pgsql的operation频道, 接受一个OP类型的操作通知
@@ -14,7 +25,7 @@ type ExtractCacheData<T extends CacheType,K extends CacheType['key']> = Extract<
  *     | { op:'insert'; table:T; new:R;}
  *     | { op:'update'; table:T; new:R; old:R;}
  *     | { op:'delete'; table:T; old:R;}
- *     | { op:'manual_update'; table:T; new:R; }
+ *     | { op:'set'   ; table:T; new:R;}
  * type DBOperationNotify =
  *     | DBOperation<'message'       , MessageDbRow>
  *     | DBOperation<'conversation'  , ConversationDbRow>
@@ -56,14 +67,18 @@ type ExtractCacheData<T extends CacheType,K extends CacheType['key']> = Extract<
 export class DBCacheCoordinator<
 KS extends CacheType,
 OP extends {table:string},
-> {
-    handler:(cache:DBCacheCoordinator<KS,OP>,op:OP)=>any;
+> extends EventSystem<{[K in OP['table']]:(arg:{
+    coordinator:DBCacheCoordinator<KS,OP>,
+    op:Extract<OP,{table:K}>
+})=>MPromise<void>}&{
+    onNotify:(arg:{
+        coordinator:DBCacheCoordinator<KS,OP>,
+        op:OP
+    })=>MPromise<void>;
+}>{
     cache:SmartCache<KS['key'],KS['data']>;
-    constructor(arg:{
-        handler:(cache:DBCacheCoordinator<KS,OP>,op:OP)=>any,
-        cache:SmartCache<KS['key'],KS['data']>
-    }){
-        this.handler = arg.handler;
+    constructor(arg:{ cache:SmartCache<KS['key'],KS['data']> }){
+        super();
         this.cache = arg.cache;
     }
     /**使缓存协调器订阅数据库的操作通知频道
@@ -80,7 +95,7 @@ OP extends {table:string},
                 if(channel !== tarhetChannel) return;
                 if(payload == undefined ) return;
                 const notify = JSON.parse(payload) as OP;
-                await this.proc(notify);
+                this.proc(notify);
             });
             // 监听错误和结束，触发重连
             listener.on('error', async err => {
@@ -101,7 +116,7 @@ OP extends {table:string},
                     listener.release();
                 }catch{}
             }})
-        }
+        } 
         await setupListener();
     }
     /**获取缓存 */
@@ -121,8 +136,10 @@ OP extends {table:string},
         this.cache.remove(key);
     }
     /**处理通知 */
-    proc(op:OP):MPromise<void>{
-        return this.handler(this,op);
+    async proc(op:OP):Promise<void>{
+        await (this.invokeEvent as any)(op.table, ({ coordinator:this, op }));
+        await (this.invokeEvent as any)('onNotify',({ coordinator:this, op }));
+        return
     }
     /**尝试获取缓存, 如果不存在则以func的结果设置缓存, 返回undefined时不做处理
      * @param key  - 缓存键
@@ -152,58 +169,3 @@ OP extends {table:string},
     }
 }
 
-
-/**数据库操作通知
- * @template T 表单id
- * @template R 移除复杂内容的行快照
- * @template D 全量行数据
- */
-export type DBOperation<T extends string,R> =
-    | { op:'insert'; table:T; new:R;}        // 存在对应键则更新数据
-    | { op:'update'; table:T; new:R; old:R;} // 存在对应键则更新数据
-    | { op:'delete'; table:T; old:R;}        // 删除对应键
-    | { op:'set'   ; table:T; new:R;}        // 存在对应键则更新数据, 不存在者插入数据并触发提升
-
-///**数据库操作通知数据 */
-//type DBOperationNotify =
-//DBOperation<'message'       ,1>       |
-//DBOperation<'conversation'  ,2>  |
-//DBOperation<'participation' ,3> |
-//DBOperation<'user_data'     ,4>;
-//
-//type UserDataKey = `user_data user_id:${string}`;
-//type MessageKey  = `message message_id:${string}`;
-//export type ConvKey     = `conversation conversation_id:${string}`;
-//type PartKey     = `participation char_id:${string}-thread_id:${string}`;
-//type ChoiceKey   = `choice_list conversation_id:${string}-parent_message_id:${string}`;
-//
-//type CacheTable = {
-//    user_data:{
-//        key:UserDataKey;
-//        data:1;
-//    },
-//    message:{
-//        key:MessageKey;
-//        data:2;
-//    },
-//    conversation:{
-//        key:ConvKey;
-//        data:3;
-//    },
-//    participation:{
-//        key:PartKey;
-//        data:4;
-//    },
-//    choice_list:{
-//        key:ChoiceKey;
-//        data:5[];
-//    }
-//};
-//
-//
-//const DBCache = new DBCacheCoordinator<CacheTable, DBOperationNotify>({
-//    handler: null as any,
-//    cache: null as any,
-//});
-//
-//DBCache.getOrSetCache(`user_data user_id:123` as UserDataKey,()=>1)
