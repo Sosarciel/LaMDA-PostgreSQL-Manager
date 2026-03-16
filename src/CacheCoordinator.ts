@@ -169,3 +169,19 @@ OP extends {table:string},
     }
 }
 
+
+
+type DBJsonDataCacheCoordinatorOption = {
+
+}
+/**针对单列json数据的缓存协调器 */
+class DBJsonDataCacheCoordinator<
+KS extends CacheType,
+OP extends {table:string},
+> extends DBCacheCoordinator<KS,OP>{
+    constructor(arg:{
+        cache:SmartCache<KS['key'],KS['data']>
+    }){
+        super(arg);
+    }
+}

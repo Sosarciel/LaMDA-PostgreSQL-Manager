@@ -1,4 +1,4 @@
-import { AnyFunc, DeepReadonly, JObject } from "@zwa73/js-utils";
+import { DeepReadonly, JObject } from "@zwa73/js-utils";
 import { UtilFunc } from "@zwa73/utils";
 
 
@@ -11,6 +11,8 @@ export type DBJsonDataStruct<T> = DeepReadonly<{
         created_at?:string;
         /**pgsql的带时区文本时间戳 */
         updated_at?:string;
+        /**数据hash值 */
+        data_hash?:string;
     };
 }>;
 
