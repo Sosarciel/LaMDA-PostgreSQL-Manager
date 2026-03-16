@@ -1,14 +1,15 @@
-import { EventSystem, MPromise, SmartCache } from "@zwa73/js-utils";
+import { EventSystem, MPromise, NeedInit, SmartCache } from "@zwa73/js-utils";
 import { DBManager } from "./Manager";
-import { SLogger } from "@zwa73/utils";
+import { ivk, match, SLogger } from "@zwa73/utils";
 import { DBJsonDataStruct } from "./JsonDataStruct";
 
 type CacheEntry =
-    | {key:string,data:any}
-    | {key:string,data:any,notify:DBOperation<string,unknown>};
+    | {key:string,struct:any}
+    | {key:string,struct:any,notify:DBOperation<string,unknown>};
 
-type ExtData<T extends CacheEntry,K extends CacheEntry['key']> = Extract<T,{key:K}>['data'];
-type ExtOP<T extends CacheEntry> = Extract<T,{notify:unknown}>['notify'];
+type ExtData<T extends CacheEntry,K extends CacheEntry['key']> = Extract<T,{key:K}>['struct'];
+type ExtNotify<T extends CacheEntry> = Extract<T,{notify:unknown}>['notify'];
+
 /**数据库操作通知
  * @template T 表单id
  * @template R 移除复杂内容的行快照
@@ -65,17 +66,17 @@ export type DBOperation<T extends string,R> =
  */
 export class DBCacheCoordinator<
     SET extends CacheEntry
-> extends EventSystem<{[K in ExtOP<SET>['table']]:(arg:{
+> extends EventSystem<{[K in ExtNotify<SET>['table']]:(arg:{
     coordinator:DBCacheCoordinator<SET>,
-    op:Extract<ExtOP<SET>,{table:K}>
+    notify:Extract<ExtNotify<SET>,{table:K}>
 })=>MPromise<void>}&{
     onNotify:(arg:{
         coordinator:DBCacheCoordinator<SET>,
-        op:ExtOP<SET>
+        notify:ExtNotify<SET>
     })=>MPromise<void>;
 }>{
-    cache:SmartCache<SET['key'],SET['data']>;
-    constructor(arg:{ cache:SmartCache<SET['key'],SET['data']> }){
+    cache:SmartCache<SET['key'],SET['struct']>;
+    constructor(arg:{ cache:SmartCache<SET['key'],SET['struct']> }){
         super();
         this.cache = arg.cache;
     }
@@ -92,7 +93,7 @@ export class DBCacheCoordinator<
                 const { channel, payload } = msg;
                 if(channel !== tarhetChannel) return;
                 if(payload == undefined ) return;
-                const notify = JSON.parse(payload) as ExtOP<SET>;
+                const notify = JSON.parse(payload) as ExtNotify<SET>;
                 this.proc(notify);
             });
             // 监听错误和结束，触发重连
@@ -134,9 +135,9 @@ export class DBCacheCoordinator<
         this.cache.remove(key);
     }
     /**处理通知 */
-    async proc(op:ExtOP<SET>):Promise<void>{
-        await (this.invokeEvent as any)(op.table  ,({ coordinator:this, op }));
-        await (this.invokeEvent as any)('onNotify',({ coordinator:this, op }));
+    async proc(notify:ExtNotify<SET>):Promise<void>{
+        await (this.invokeEvent as any)(notify.table ,({ coordinator:this,  notify }));
+        await (this.invokeEvent as any)('onNotify'   ,({ coordinator:this,  notify }));
         return
     }
     /**尝试获取缓存, 如果不存在则以func的结果设置缓存, 返回undefined时不做处理
@@ -170,41 +171,134 @@ export class DBCacheCoordinator<
 
 type LastRow<T extends DBOperation<string,any>> = Extract<T,{new:any}>['new']|Extract<T,{old:any}>['old'];
 export type DBJsonDataCacheCoordinatorOption<SET extends CacheEntry>= {
-    table:{[K in ExtOP<SET>['table']]?:{
-        getKey:(row:LastRow<Extract<SET,{notify:{table:K}}>['notify']>)=>Extract<SET,{notify:{table:K}}>['key']
+    table:{[K in ExtNotify<SET>['table']]?:{
+        /**获取缓存键 */
+        getKey:(row:LastRow<Extract<SET,{notify:{table:K}}>['notify']>)=>MPromise<Extract<SET,{notify:{table:K}}>['key']>,
+        /**解包通知为行数据 */
+        unwarp:(row:LastRow<Extract<SET,{notify:{table:K}}>['notify']>)=>MPromise<Extract<SET,{notify:{table:K}}>['struct']>,
     }},
 }
 
 
 type JsonCacheEntry =
-    | {key:string,data:DBJsonDataStruct<unknown>}
-    | {key:string,data:DBJsonDataStruct<unknown>,notify:DBOperation<string,DBJsonDataStruct<unknown>>};
+    | {key:string,struct:DBJsonDataStruct<unknown>}
+    | {key:string,struct:DBJsonDataStruct<unknown>,notify:DBOperation<string,DBJsonDataStruct<unknown>>};
 
 /**针对单列json数据的缓存协调器 */
 export class DBJsonDataCacheCoordinator<
 SET extends JsonCacheEntry,
-OPT extends DBJsonDataCacheCoordinatorOption<SET>,
-> extends DBCacheCoordinator<SET>{
-    option:OPT;
+> extends DBCacheCoordinator<SET> implements NeedInit{
+    inited:Promise<void>;
+    option:DBJsonDataCacheCoordinatorOption<SET>;
     constructor(arg:{
-        option:OPT,
-        cache:SmartCache<SET['key'],SET['data']>
+        option:DBJsonDataCacheCoordinatorOption<SET>,
+        cache:SmartCache<SET['key'],SET['struct']>
     }){
         super(arg);
         this.option = arg.option;
+        this.inited = ivk(async ()=>{
+            for(const table in this.option.table){
+                // 修复：必须注册为泛型表名
+                const tableName = table as ExtNotify<SET>['table'];
+                this.registerEvent(table,{
+                    handler:async ({notify})=>{
+                        const fixedOpt = this.option.table[tableName];
+                        if (!fixedOpt) return;
+
+                        const lastRow = ('new' in notify) ? notify.new : notify.old;
+                        const key = await fixedOpt.getKey(lastRow as any);
+
+                        await this.procEvent(key, notify);
+                    }
+                })
+            }
+        });
     }
-    override async proc(op: ExtOP<SET>): Promise<void> {
-        const fixedOpt = (this.option.table as any)[op.table];
+    override async proc(notify: ExtNotify<SET>): Promise<void> {
+        const fixedOpt = (this.option.table)[notify.table as keyof DBJsonDataCacheCoordinatorOption<SET>['table']];
         if(fixedOpt==undefined){
-            SLogger.warn(`DBJsonDataCacheCoordinator.proc 错误 未配置表单${op.table}`);
+            SLogger.warn(`DBJsonDataCacheCoordinator.proc 错误 未配置表单${notify.table}`);
             return;
         }
-        const lastRow = ('new' in op) ? op.new : op.old;
-        const cacheData = this.cache.peek(fixedOpt.getKey(lastRow)) as any as DBJsonDataStruct<unknown>|undefined
-        if(cacheData?.data.data_hash == lastRow.data.data_hash) return;
 
-        await (this.invokeEvent as any)(op.table  ,({ coordinator:this, op }));
-        await (this.invokeEvent as any)('onNotify',({ coordinator:this, op }));
+        //过滤重复data_hash
+        const lastRow = ('new' in notify) ? notify.new : notify.old;
+        const cacheData = this.cache.peek(await fixedOpt.getKey(lastRow)) as any as DBJsonDataStruct<unknown>|undefined
+        if( cacheData?.data.data_hash!=null &&
+            cacheData?.data.data_hash == lastRow.data.data_hash
+        ) return;
+
+        await (this.invokeEvent as any)(notify.table ,({ coordinator:this, notify }));
+        await (this.invokeEvent as any)('onNotify'   ,({ coordinator:this, notify }));
         return;
     }
+    async procEvent<K extends SET['key']>(
+        key:K,notify: Extract<SET,{op:string,key:K,notify:any}>['notify']
+    ): Promise<void> {
+        const fixedOpt = (this.option.table)[notify.table as keyof DBJsonDataCacheCoordinatorOption<SET>['table']];
+        if(fixedOpt==undefined){
+            SLogger.warn(`DBJsonDataCacheCoordinator.procEvent 错误 未配置表单${notify.table}`);
+            return;
+        }
+
+        //尝试提取新数据
+        const newdata = await match(notify.op,{
+            // delete 无需unwarp全量数据 直接返回
+            delete:()=>void this.cache.remove(key),
+            // 若为快照, 不主动拉取新数据维护 直接返回
+            insert:()=>fixedOpt?.unwarp(notify) ?? this.cache.remove(key),
+            update:()=>fixedOpt?.unwarp(notify) ?? this.cache.remove(key),
+            set   :async ()=>{
+                const unwarpedData = await fixedOpt?.unwarp(notify);
+                //尝试解构快照数据
+                if(unwarpedData==undefined){
+                    SLogger.warn(`DialogStore 缓存 commonProc 失败 key:${key} opera:`,notify);
+                    return;
+                }
+                return unwarpedData;
+            },
+        });
+        if(newdata==undefined) return;
+
+        // insert update delete 为数据库直接通知
+        // set 为手动同步 实际上不会拉取数据
+        match(notify.op,{
+            //如果直接得到数据则维护
+            insert:()=>this.tryUpdateCache(key,newdata),
+            update:()=>this.tryUpdateCache(key,newdata),
+            //如果缓存存在则更新,不存在则设置新缓存
+            set   :()=>this.cache.has(key)
+                ? this.tryUpdateCache(key,newdata,true)
+                : this.cache.set(key,newdata),
+        });
+    }
+    async tryUpdateCache<K extends SET['key']>(
+        key:K,newdata:Extract<SET,{op:string,key:K,notify:any}>['struct'],isSet=false
+    ){
+        const cacheData = this.cache.peek(key) as any as Extract<SET,{op:string,key:K,notify:any}>['struct']|undefined;
+        if(cacheData==undefined) return;
+
+        if(isSet){
+            // 手动set下null为删除 undefined为忽略
+            // 删除被显式设置null的字段
+            for (const key of Object.keys(cacheData.data)) {
+                if ((newdata.data as any)[key] === null)
+                    delete (cacheData.data as any)[key];
+            }
+        }else{
+            // 其他通知为全量数据
+            // 删除未出现在新数据中的字段
+            for (const key of Object.keys(cacheData.data)) {
+                if (!(key in newdata.data))
+                    delete (cacheData.data as any)[key];
+            }
+        }
+
+        //修正data排除null与undefiend
+        const fixedData = Object.fromEntries(Object
+            .entries(newdata.data).filter(([k, v]) => v != null));
+
+        //完整合并
+        Object.assign(cacheData.data,fixedData);
+    };
 }
