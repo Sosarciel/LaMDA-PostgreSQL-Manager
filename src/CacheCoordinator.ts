@@ -238,16 +238,6 @@ SET extends JsonCacheEntry,
             return;
         }
 
-        // 依照hash给delete之外的去重
-        const lastRow = (('new' in notify) ? notify.new : notify.old) as LastRow<typeof notify>;
-        const cacheKey = await fixedOpt.getKey(lastRow);
-        const cacheData = this.cache.peek(cacheKey);
-        if (cacheData != undefined && notify.op != 'delete'){
-            const cacheHash = await fixedOpt.getHash?.(cacheData);
-            if(cacheHash != undefined && cacheHash == (await fixedOpt.getHash?.(lastRow)))
-                return;
-        }
-
         // @ts-ignore 因为泛型函数的动态调用, TS 很难完美匹配 this.invokeEvent 的联合类型, 这里可以用 ts-ignore 豁免
         await this.invokeEvent(notify.table, { coordinator: this, notify });
         // @ts-ignore
@@ -263,6 +253,10 @@ SET extends JsonCacheEntry,
         key: K,
         notify: Extract<ExtNotify<SET>, { table: string }>
     ): Promise<void> {
+        // 直接处理delete
+        if(notify.op == 'delete')
+            return void this.cache.remove(key);
+
         const tableName = notify.table as keyof DBJsonDataCacheCoordinatorOption<SET>['table'];
         const fixedOpt = this.option.table[tableName];
         if(fixedOpt == undefined){
@@ -270,13 +264,20 @@ SET extends JsonCacheEntry,
             return;
         }
 
-        const lastRow = (('new' in notify) ? notify.new : notify.old) as LastRow<typeof notify>;
+        // 得出更新行
+        const lastRow = notify.new as LastRow<typeof notify>;
 
+        // 依照hash去重
+        const cacheKey = await fixedOpt.getKey(lastRow);
+        const cacheData = this.cache.peek(cacheKey);
+        if (cacheData != undefined){
+            const cacheHash = await fixedOpt.getHash?.(cacheData);
+            if(cacheHash != undefined && cacheHash == (await fixedOpt.getHash?.(lastRow)))
+                return;
+        }
 
         // 尝试提取新数据
         const newdata = await match(notify.op, {
-            // delete 无需unwarp全量数据 直接返回
-            delete: () => void this.cache.remove(key),
             // 若为快照, 不主动拉取新数据维护 直接返回
             insert: async () => (await fixedOpt?.isSnapshot?.(lastRow)) ? this.cache.remove(key) : await fixedOpt.unwarp(lastRow),
             update: async () => (await fixedOpt?.isSnapshot?.(lastRow)) ? this.cache.remove(key) : await fixedOpt.unwarp(lastRow),
@@ -294,7 +295,6 @@ SET extends JsonCacheEntry,
 
         if (newdata == undefined) return;
         assertType<ExtStruct<SET, K>>(newdata);
-        assertType<Exclude<ExtNotify<SET>,{op:'delete'}>>(notify);
 
         await match(notify.op, {
             insert: () => this.tryUpdateCache(key, newdata),
