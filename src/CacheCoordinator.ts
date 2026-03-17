@@ -1,7 +1,8 @@
-import { AwaitInited, EventSystem, MPromise, NeedInit, SmartCache } from "@zwa73/js-utils";
+import { AwaitInited, EventSystem, JObject, MPromise, NeedInit, SmartCache } from "@zwa73/js-utils";
 import { DBManager } from "./Manager";
 import { assertType, ivk, match, SLogger } from "@zwa73/utils";
 import { DBJsonDataStruct } from "./JsonDataStruct";
+import { UtilDB } from "./UtilDB";
 
 type CacheEntry =
     | {key:string,struct:any}
@@ -265,7 +266,7 @@ SET extends JsonCacheEntry,
         const tableName = notify.table as keyof DBJsonDataCacheCoordinatorOption<SET>['table'];
         const fixedOpt = this.option.table[tableName];
         if(fixedOpt == undefined){
-            SLogger.warn(`DBJsonDataCacheCoordinator.procEvent 错误 未配置表单${notify.table}`);
+            SLogger.warn(`DBJsonDataCacheCoordinator.procStandardEvent 错误 未配置表单${notify.table}`);
             return;
         }
 
@@ -281,7 +282,7 @@ SET extends JsonCacheEntry,
                 const unwarpedData = await fixedOpt.unwarp(notify as any);
                 //尝试解构快照数据
                 if (unwarpedData == undefined) {
-                    SLogger.warn(`procStandardEvent 缓存同步解包失败 key:${key} notify:`, notify);
+                    SLogger.warn(`DBJsonDataCacheCoordinator.procStandardEvent 缓存同步解包失败 key:${key} notify:`, notify);
                     return;
                 }
                 return unwarpedData;
@@ -315,29 +316,19 @@ SET extends JsonCacheEntry,
         if (cacheData == undefined) return;
 
         // 因为 DBJsonDataStruct 是 DeepReadonly, 在内部执行变异时, 我们显式转为字典态进行安全操作
-        const targetData = cacheData.data as Record<string, unknown>;
-        const sourceData = newdata.data as Record<string, unknown>;
+        const targetData = cacheData.data as JObject;
+        const sourceData = newdata.data as JObject;
 
-        if (isSet) {
-            // 手动set下null为删除 undefined为忽略
-            // 删除被显式设置null的字段
-            for (const k of Object.keys(targetData)) {
-                if (sourceData[k] === null) delete targetData[k];
-            }
-        } else {
-            // 其他通知为全量数据
-            // 删除未出现在新数据中的字段
-            for (const k of Object.keys(targetData)) {
-                if (!(k in sourceData)) delete targetData[k];
-            }
+        const newData = isSet
+            ? UtilDB.mergeAndClean(targetData,sourceData)
+            : sourceData;
+
+        // 删除未出现在新数据中的字段
+        for (const k of Object.keys(targetData)) {
+            if (!(k in newData)) delete targetData[k];
         }
 
-        // 修正 data 排除 null 与 undefined
-        const fixedData = Object.fromEntries(
-            Object.entries(sourceData).filter(([_, v]) => v != null)
-        );
-
         // 完整合并
-        Object.assign(targetData, fixedData);
+        Object.assign(targetData, newData);
     }
 }

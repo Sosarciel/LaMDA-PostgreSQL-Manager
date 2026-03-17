@@ -1,4 +1,4 @@
-import { JToken, UtilFunc } from '@zwa73/utils';
+import { JObject, JToken, UtilFunc } from '@zwa73/utils';
 import crypto from 'crypto';
 
 
@@ -30,5 +30,31 @@ export class UtilDB{
         });
 
         return crypto.createHash('md5').update(canonicalStr).digest('hex');
+    }
+    /**等价于 jsonb_merge_and_clean 的assign策略
+     * @param base   - 源对象
+     * @param target - 合并对象
+     */
+    static mergeAndClean<B extends JObject,T extends JObject>(base:B, target:T):B&T{
+        const result = {...base} as JObject;
+        //清洗原数据
+        for (const key of Object.keys(result))
+            if (result[key] == null) delete result[key];
+        //合并新数据
+        for (const key of Object.keys(target)) {
+            const val = target[key];
+            // undefined时忽略
+            if (val === undefined)
+                continue;
+
+            // null 为删除
+            if (val === null) {
+                delete result[key];
+                continue;
+            }
+            // 其他：新增或覆盖
+            result[key] = val;
+        }
+        return result as B&T;
     }
 }
