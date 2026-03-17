@@ -172,8 +172,8 @@ export class DBCacheCoordinator<
     }
 }
 
-
-type LastRow<T extends DBOperation<string,any>> = Extract<T,{new:any}>['new']|Extract<T,{old:any}>['old'];
+type LastRow<T extends DBOperation<string,any>> = T extends { new: infer R } ? R : T extends { old: infer R } ? R : never;
+//type LastRow<T extends DBOperation<string,any>> = Extract<T,{new:any}>['new']|Extract<T,{old:any}>['old'];
 export type DBJsonDataCacheCoordinatorOption<SET extends CacheEntry>= {
     table:{[K in ExtNotify<SET>['table']]?:{
         /**获取缓存键 */
@@ -218,7 +218,7 @@ SET extends JsonCacheEntry,
                         if (!fixedOpt) return;
 
                         const lastRow = ('new' in notify) ? notify.new : notify.old;
-                        const key = await fixedOpt.getKey(lastRow);
+                        const key = await fixedOpt.getKey(lastRow as any);
 
                         await this.procStandardEvent(key, notify);
                     }
@@ -239,7 +239,7 @@ SET extends JsonCacheEntry,
 
         // 过滤重复 data_hash (提取 lastRow 交由 TS infer 安全推导)
         const lastRow = ('new' in notify) ? notify.new : notify.old;
-        const key = await fixedOpt.getKey(lastRow);
+        const key = await fixedOpt.getKey(lastRow as any);
         const cacheData = this.cache.peek(key);
 
         if (
@@ -260,7 +260,7 @@ SET extends JsonCacheEntry,
     @AwaitInited
     async procStandardEvent<K extends SET['key']>(
         key: K,
-        notify: Extract<ExtNotify<SET>, { table: any }> // 直接传入原始 Notify, 利用内部 match 解构
+        notify: Extract<ExtNotify<SET>, { table: string }> // 直接传入原始 Notify, 利用内部 match 解构
     ): Promise<void> {
         const tableName = notify.table as keyof DBJsonDataCacheCoordinatorOption<SET>['table'];
         const fixedOpt = this.option.table[tableName];
