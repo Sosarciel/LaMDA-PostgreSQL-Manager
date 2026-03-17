@@ -183,7 +183,9 @@ export type DBJsonDataCacheCoordinatorOption<SET extends CacheEntry>= {
          */
         unwarp:(row:LastRow<Extract<ExtNotify<SET>,{table:K}>>)=>MPromise<Extract<SET,{notify:{table:K}}>['struct']>,
         /**判断是否需要从数据库拉取全量数据 */
-        isSnapshot:(row:LastRow<Extract<ExtNotify<SET>,{table:K}>>)=>MPromise<boolean>,
+        isSnapshot?:(row:LastRow<Extract<ExtNotify<SET>,{table:K}>>)=>MPromise<boolean>,
+        /**获取用于去重的hash */
+        getHash?:(row:LastRow<Extract<ExtNotify<SET>,{table:K}>>|Extract<SET,{notify:{table:K}}>['struct'])=>MPromise<string|undefined|null>,
     }},
 }
 
@@ -231,10 +233,19 @@ SET extends JsonCacheEntry,
     override async proc(notify: ExtNotify<SET>): Promise<void> {
         const tableName = notify.table as keyof DBJsonDataCacheCoordinatorOption<SET>['table'];
         const fixedOpt = this.option.table[tableName];
-
         if (fixedOpt == undefined) {
             SLogger.warn(`DBJsonDataCacheCoordinator.proc 错误 未配置表单${notify.table}`);
             return;
+        }
+
+        // 依照hash给delete之外的去重
+        const lastRow = (('new' in notify) ? notify.new : notify.old) as LastRow<typeof notify>;
+        const cacheKey = await fixedOpt.getKey(lastRow);
+        const cacheData = this.cache.peek(cacheKey);
+        if (cacheData != undefined && notify.op != 'delete'){
+            const cacheHash = await fixedOpt.getHash?.(cacheData);
+            if(cacheHash != undefined && cacheHash == (await fixedOpt.getHash?.(lastRow)))
+                return;
         }
 
         // @ts-ignore 因为泛型函数的动态调用, TS 很难完美匹配 this.invokeEvent 的联合类型, 这里可以用 ts-ignore 豁免
@@ -260,13 +271,6 @@ SET extends JsonCacheEntry,
         }
 
         const lastRow = (('new' in notify) ? notify.new : notify.old) as LastRow<typeof notify>;
-        const cacheKey = await fixedOpt.getKey(lastRow);
-        const cacheData = this.cache.peek(cacheKey);
-
-        if (
-            cacheData?.data?.data_hash != null &&
-            cacheData.data.data_hash === lastRow.data?.data_hash
-        ) return;
 
 
         // 尝试提取新数据
@@ -274,8 +278,8 @@ SET extends JsonCacheEntry,
             // delete 无需unwarp全量数据 直接返回
             delete: () => void this.cache.remove(key),
             // 若为快照, 不主动拉取新数据维护 直接返回
-            insert: async () => (await fixedOpt?.isSnapshot(lastRow)) ? this.cache.remove(key) : fixedOpt.unwarp(lastRow),
-            update: async () => (await fixedOpt?.isSnapshot(lastRow)) ? this.cache.remove(key) : fixedOpt.unwarp(lastRow),
+            insert: async () => (await fixedOpt?.isSnapshot?.(lastRow)) ? this.cache.remove(key) : await fixedOpt.unwarp(lastRow),
+            update: async () => (await fixedOpt?.isSnapshot?.(lastRow)) ? this.cache.remove(key) : await fixedOpt.unwarp(lastRow),
             // 主动set一定触发完整解包
             set: async () => {
                 const unwarpedData = await fixedOpt.unwarp(lastRow);
