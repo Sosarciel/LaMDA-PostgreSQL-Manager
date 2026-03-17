@@ -125,7 +125,7 @@ export class DBCacheCoordinator<
     }
     /**获取缓存 */
     getCache<K extends SET['key']>(key:K):ExtStruct<SET,K>|undefined{
-        return this.cache.get(key) as any;
+        return this.cache.get(key);
     }
     /**设置缓存 */
     setCache<K extends SET['key']>(key:K,value:ExtStruct<SET,K>):void{
@@ -133,7 +133,7 @@ export class DBCacheCoordinator<
     }
     /**检视缓存, 不触发提升 */
     peekCache<K extends SET['key']>(key:K):ExtStruct<SET,K>|undefined{
-        return this.cache.peek(key) as any;
+        return this.cache.peek(key);
     }
     /**移除缓存 */
     removeCache<K extends SET['key']>(key:K):void{
@@ -173,8 +173,7 @@ export class DBCacheCoordinator<
     }
 }
 
-type LastRow<T extends DBOperation<string,any>> = T extends { new: infer R } ? R : T extends { old: infer R } ? R : never;
-//type LastRow<T extends DBOperation<string,any>> = Extract<T,{new:any}>['new']|Extract<T,{old:any}>['old'];
+type LastRow<T extends DBOperation<string,unknown>> = T extends { new: infer R } ? R : T extends { old: infer R } ? R : never;
 export type DBJsonDataCacheCoordinatorOption<SET extends CacheEntry>= {
     table:{[K in ExtNotify<SET>['table']]?:{
         /**获取缓存键 */
@@ -218,8 +217,8 @@ SET extends JsonCacheEntry,
                         const fixedOpt = this.option.table[tableName];
                         if (!fixedOpt) return;
 
-                        const lastRow = ('new' in notify) ? notify.new : notify.old;
-                        const key = await fixedOpt.getKey(lastRow as any);
+                        const lastRow = (('new' in notify) ? notify.new : notify.old) as LastRow<typeof notify>;
+                        const key = await fixedOpt.getKey(lastRow);
 
                         await this.procStandardEvent(key, notify);
                     }
