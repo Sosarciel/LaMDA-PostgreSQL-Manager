@@ -5,8 +5,8 @@ import { DBJsonDataStruct } from "./JsonDataStruct";
 import { UtilDB } from "./UtilDB";
 
 type CacheEntry =
-    | {key:string,struct:any}
-    | {key:string,struct:any,notify:DBOperation<string,unknown>};
+    | {key:string,struct:object}
+    | {key:string,struct:object,notify:DBOperation<string,unknown>};
 
 type ExtStruct<T extends CacheEntry,K extends CacheEntry['key']> = Extract<T,{key:K}>['struct'];
 type ExtNotify<T extends CacheEntry> = Extract<T,{notify:unknown}>['notify'];
@@ -129,7 +129,7 @@ export class DBCacheCoordinator<
     }
     /**设置缓存 */
     setCache<K extends SET['key']>(key:K,value:ExtStruct<SET,K>):void{
-        this.cache.set(key,value as any);
+        this.cache.set(key,value);
     }
     /**检视缓存, 不触发提升 */
     peekCache<K extends SET['key']>(key:K):ExtStruct<SET,K>|undefined{
@@ -152,7 +152,7 @@ export class DBCacheCoordinator<
      */
     async getOrSetCache<K extends SET['key'], R extends ExtStruct<SET,K>|undefined>(key:K,func:()=>MPromise<R>):Promise<R>{
         const cache = this.getCache(key);
-        if(cache!=undefined) return cache;
+        if(cache!=undefined) return cache as R;
         const result = await func();
         if(result!=undefined)
             this.setCache(key,result);
@@ -163,7 +163,7 @@ export class DBCacheCoordinator<
      * @param value - 缓存值
      * @returns 缓存数据
      */
-    setCacheIfNotExist<K extends SET['key'], R extends ExtStruct<SET,K>|undefined>(key:K,value:R):void{
+    setCacheIfNotExist<K extends SET['key'], R extends ExtStruct<SET,K>>(key:K,value:R):void{
         if(this.hasCache(key)) return;
         this.setCache(key,value);
     }
@@ -178,13 +178,13 @@ type LastRow<T extends DBOperation<string,any>> = T extends { new: infer R } ? R
 export type DBJsonDataCacheCoordinatorOption<SET extends CacheEntry>= {
     table:{[K in ExtNotify<SET>['table']]?:{
         /**获取缓存键 */
-        getKey:(row:LastRow<Extract<SET,{notify:{table:K}}>['notify']>)=>MPromise<Extract<SET,{notify:{table:K}}>['key']>,
+        getKey:(row:LastRow<Extract<ExtNotify<SET>,{table:K}>>)=>MPromise<Extract<SET,{notify:{table:K}}>['key']>,
         /**解包通知为行数据
          * 如果是快照则应该在此直接从数据库拉取全量数据
          */
-        unwarp:(row:LastRow<Extract<SET,{notify:{table:K}}>['notify']>)=>MPromise<Extract<SET,{notify:{table:K}}>['struct']>,
+        unwarp:(row:LastRow<Extract<ExtNotify<SET>,{table:K}>>)=>MPromise<Extract<SET,{notify:{table:K}}>['struct']>,
         /**判断是否需要从数据库拉取全量数据 */
-        isSnapshot:(row:LastRow<Extract<SET,{notify:{table:K}}>['notify']>)=>MPromise<boolean>,
+        isSnapshot:(row:LastRow<Extract<ExtNotify<SET>,{table:K}>>)=>MPromise<boolean>,
     }},
 }
 
@@ -238,16 +238,6 @@ SET extends JsonCacheEntry,
             return;
         }
 
-        // 过滤重复 data_hash (提取 lastRow 交由 TS infer 安全推导)
-        const lastRow = ('new' in notify) ? notify.new : notify.old;
-        const key = await fixedOpt.getKey(lastRow as any);
-        const cacheData = this.cache.peek(key);
-
-        if (
-            cacheData?.data?.data_hash != null &&
-            cacheData.data.data_hash === lastRow.data?.data_hash
-        ) return;
-
         // @ts-ignore 因为泛型函数的动态调用, TS 很难完美匹配 this.invokeEvent 的联合类型, 这里可以用 ts-ignore 豁免
         await this.invokeEvent(notify.table, { coordinator: this, notify });
         // @ts-ignore
@@ -261,7 +251,7 @@ SET extends JsonCacheEntry,
     @AwaitInited
     async procStandardEvent<K extends SET['key']>(
         key: K,
-        notify: Extract<ExtNotify<SET>, { table: string }> // 直接传入原始 Notify, 利用内部 match 解构
+        notify: Extract<ExtNotify<SET>, { table: string }>
     ): Promise<void> {
         const tableName = notify.table as keyof DBJsonDataCacheCoordinatorOption<SET>['table'];
         const fixedOpt = this.option.table[tableName];
@@ -270,16 +260,26 @@ SET extends JsonCacheEntry,
             return;
         }
 
+        const lastRow = (('new' in notify) ? notify.new : notify.old) as LastRow<typeof notify>;
+        const cacheKey = await fixedOpt.getKey(lastRow);
+        const cacheData = this.cache.peek(cacheKey);
+
+        if (
+            cacheData?.data?.data_hash != null &&
+            cacheData.data.data_hash === lastRow.data?.data_hash
+        ) return;
+
+
         // 尝试提取新数据
         const newdata = await match(notify.op, {
             // delete 无需unwarp全量数据 直接返回
             delete: () => void this.cache.remove(key),
             // 若为快照, 不主动拉取新数据维护 直接返回
-            insert: async () => (await fixedOpt?.isSnapshot(notify as any)) ? this.cache.remove(key) : fixedOpt.unwarp(notify as any),
-            update: async () => (await fixedOpt?.isSnapshot(notify as any)) ? this.cache.remove(key) : fixedOpt.unwarp(notify as any),
+            insert: async () => (await fixedOpt?.isSnapshot(lastRow)) ? this.cache.remove(key) : fixedOpt.unwarp(lastRow),
+            update: async () => (await fixedOpt?.isSnapshot(lastRow)) ? this.cache.remove(key) : fixedOpt.unwarp(lastRow),
             // 主动set一定触发完整解包
             set: async () => {
-                const unwarpedData = await fixedOpt.unwarp(notify as any);
+                const unwarpedData = await fixedOpt.unwarp(lastRow);
                 //尝试解构快照数据
                 if (unwarpedData == undefined) {
                     SLogger.warn(`DBJsonDataCacheCoordinator.procStandardEvent 缓存同步解包失败 key:${key} notify:`, notify);
