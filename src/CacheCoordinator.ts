@@ -281,7 +281,7 @@ SET extends JsonCacheEntry,
                 const unwarpedData = await fixedOpt.unwarp(notify as any);
                 //尝试解构快照数据
                 if (unwarpedData == undefined) {
-                    SLogger.warn(`缓存同步解包失败 key:${key} notify:`, notify);
+                    SLogger.warn(`procStandardEvent 缓存同步解包失败 key:${key} notify:`, notify);
                     return;
                 }
                 return unwarpedData;
