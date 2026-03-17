@@ -87,6 +87,8 @@ export class DBCacheCoordinator<
      */
     async subscribeNotify(mgr:DBManager, tarhetChannel:string){
         const setupListener = async () => {
+            //清空当前缓存
+            this.cache.clean();
             const listener = await mgr._pool.connect();
             await listener.query(`LISTEN ${tarhetChannel};`);
             // 处理通知
