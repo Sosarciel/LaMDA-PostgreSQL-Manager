@@ -15,20 +15,26 @@ export type MockJsonCacheTypeSet = {
     notify: DBOperation<typeof MOCK_TABLE_NAME, DBJsonDataStruct<{}>>;
 };
 
-/**模拟JSON数据缓存协调器单例 */
-export const jsonCache = new SmartCache<MockJsonCacheKey, DBJsonDataStruct<{}>>({ ttl: 600_000 });
-export const MockJsonDataCacheCoordinator = new DBJsonDataCacheCoordinator<MockJsonCacheTypeSet>({
-    option: {
-        table: {
-            [MOCK_TABLE_NAME]: {
-                getKey: (row: DBJsonDataStruct<{}>) => {
-                    return `${MOCK_TABLE_NAME}=${MOCK_ID_FIELD}:${(row.data as any)[MOCK_ID_FIELD] as string}`;
-                },
-                unwarp: (row: DBJsonDataStruct<{}>) => {
-                    return Promise.resolve(row);
+/**创建模拟JSON数据缓存协调器
+ * @returns 缓存和协调器实例
+ */
+export const createMockJsonDataCacheCoordinator = () => {
+    const jsonCache = new SmartCache<MockJsonCacheKey, DBJsonDataStruct<{}>>({ ttl: 600_000 });
+    const coordinator = new DBJsonDataCacheCoordinator<MockJsonCacheTypeSet>({
+        option: {
+            table: {
+                [MOCK_TABLE_NAME]: {
+                    getKey: (row: DBJsonDataStruct<{}>) => {
+                        return `${MOCK_TABLE_NAME}=${MOCK_ID_FIELD}:${(row.data as any)[MOCK_ID_FIELD] as string}`;
+                    },
+                    unwarp: (row: DBJsonDataStruct<{}>) => {
+                        return Promise.resolve(row);
+                    }
                 }
             }
-        }
-    },
-    cache: jsonCache
-});
+        },
+        cache: jsonCache
+    });
+    
+    return { jsonCache, coordinator };
+};

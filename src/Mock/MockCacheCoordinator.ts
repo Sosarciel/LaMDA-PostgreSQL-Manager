@@ -50,16 +50,22 @@ export const createCacheKey = (id: string): MockCacheKey => {
     return `${MOCK_TABLE_NAME}=${MOCK_ID_FIELD}:${id}`;
 };
 
-/**模拟缓存协调器单例 */
-export const cache = new SmartCache<MockCacheKey, DBJsonDataStruct<{}>>({ ttl: 600_000 });
-export const MockCacheCoordinator = new DBCacheCoordinator<MockCacheTypeSet>({ cache });
-
-// 注册表事件处理器
-MockCacheCoordinator.registerEvent(MOCK_TABLE_NAME, {
-    id: MOCK_TABLE_NAME,
-    handler: ({ notify }) => {
-        const lastRow = ('new' in notify) ? notify.new : notify.old;
-        const key = createCacheKey((lastRow.data as any)[MOCK_ID_FIELD] as string);
-        commonProc(cache, key, notify);
-    }
-});
+/**创建模拟缓存协调器
+ * @returns 缓存和协调器实例
+ */
+export const createMockCacheCoordinator = () => {
+    const cache = new SmartCache<MockCacheKey, DBJsonDataStruct<{}>>({ ttl: 600_000 });
+    const coordinator = new DBCacheCoordinator<MockCacheTypeSet>({ cache });
+    
+    // 注册表事件处理器
+    coordinator.registerEvent(MOCK_TABLE_NAME, {
+        id: MOCK_TABLE_NAME,
+        handler: ({ notify }) => {
+            const lastRow = ('new' in notify) ? notify.new : notify.old;
+            const key = createCacheKey((lastRow.data as any)[MOCK_ID_FIELD] as string);
+            commonProc(cache, key, notify);
+        }
+    });
+    
+    return { cache, coordinator };
+};
