@@ -6,3 +6,11 @@ export namespace PostgreSQLMockTool {
     /**Mock表唯一标识字段名 */
     export const MOCK_ID_FIELD = "test_id";
 }
+
+import type { DBJsonDataStruct } from "../JsonDataStruct";
+
+/**测试数据库行类型 */
+export type TestDBRow = DBJsonDataStruct<{
+    test_id: string;
+    name: string;
+}>;
