@@ -3,7 +3,10 @@ import type { DBManager } from "../Manager";
 import type { DBJsonDataStruct } from "../JsonDataStruct";
 import { DBCacheCoordinator } from "../CacheCoordinator";
 import { SLogger, throwError } from "@zwa73/utils";
-import { MockCacheCoordinator, MockCacheTypeSet, MOCK_TABLE_NAME, MOCK_ID_FIELD, createCacheKey } from "./MockCacheCoordinator";
+import { PostgreSQLMockTool } from "./PostgreSQLMockTool";
+import { createCacheKey, MockCacheTypeSet } from "./MockCacheCoordinator";
+
+const { MOCK_TABLE_NAME, MOCK_ID_FIELD } = PostgreSQLMockTool;
 
 /**模拟表访问器选项 */
 export type MockAccessOpt = {
@@ -16,21 +19,20 @@ export type MockAccessOpt = {
  */
 export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
     private manager: DBManager;
-    private cache: DBCacheCoordinator<MockCacheTypeSet>;
+    private cache: DBCacheCoordinator<MockCacheTypeSet> | null = null;
 
     /**构造函数
      * @param manager 数据库管理器
      */
     constructor(manager: DBManager) {
         this.manager = manager;
-        this.cache = MockCacheCoordinator;
-        
-        // 订阅数据库通知
-        this.subscribeNotify();
     }
 
     /**订阅数据库通知 */
     private async subscribeNotify() {
+        if (!this.cache) {
+            throwError("缓存协调器未注入", 'error');
+        }
         try {
             await this.cache.subscribeNotify(this.manager, 'operation');
         } catch (e) {
@@ -50,6 +52,9 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
      * @param opt 选项
      */
     async insertOrUpdate(data: T, opt?: MockAccessOpt): Promise<void> {
+        if (!this.cache) {
+            throwError("缓存协调器未注入", 'error');
+        }
         const client = opt?.client || this.manager.client;
 
         try {
@@ -68,6 +73,9 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
      * @returns 数据
      */
     async getData(id: string, opt?: MockAccessOpt): Promise<T | undefined> {
+        if (!this.cache) {
+            throwError("缓存协调器未注入", 'error');
+        }
         const cacheKey = createCacheKey(id);
         return await this.cache.getOrSetCache(cacheKey, async () => {
             const client = opt?.client || this.manager.client;
@@ -90,6 +98,9 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
      * @param opt 选项
      */
     async deleteData(id: string, opt?: MockAccessOpt): Promise<void> {
+        if (!this.cache) {
+            throwError("缓存协调器未注入", 'error');
+        }
         const client = opt?.client || this.manager.client;
 
         try {
@@ -107,6 +118,9 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
 
     /**清除缓存 */
     clearCache(): void {
+        if (!this.cache) {
+            throwError("缓存协调器未注入", 'error');
+        }
         this.cache.cache.clean();
     }
 
@@ -115,6 +129,9 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
      * @returns 是否存在
      */
     hasCache(id: string): boolean {
+        if (!this.cache) {
+            throwError("缓存协调器未注入", 'error');
+        }
         const cacheKey = createCacheKey(id);
         return this.cache.hasCache(cacheKey);
     }
@@ -124,6 +141,9 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
      * @returns 缓存数据
      */
     peekCache(id: string): T | undefined {
+        if (!this.cache) {
+            throwError("缓存协调器未注入", 'error');
+        }
         const cacheKey = createCacheKey(id);
         return this.cache.peekCache(cacheKey) as T | undefined;
     }
@@ -132,6 +152,9 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
      * @returns 缓存协调器
      */
     getCacheCoordinator(): DBCacheCoordinator<MockCacheTypeSet> {
+        if (!this.cache) {
+            throwError("缓存协调器未注入", 'error');
+        }
         return this.cache;
     }
 
@@ -140,6 +163,8 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
      */
     injectCacheCoordinator(cacheCoordinator: DBCacheCoordinator<MockCacheTypeSet>): void {
         this.cache = cacheCoordinator;
+        // 订阅数据库通知
+        this.subscribeNotify();
     }
 
     /**获取表名

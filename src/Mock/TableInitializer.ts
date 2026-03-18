@@ -1,5 +1,8 @@
 import type { DBClient } from "../Client";
 import { SLogger } from "@zwa73/utils";
+import { PostgreSQLMockTool } from "./PostgreSQLMockTool";
+
+const { MOCK_TABLE_NAME, MOCK_ID_FIELD } = PostgreSQLMockTool;
 
 /**表初始化工具
  * 用于在测试环境中创建表结构、索引、触发器和函数
@@ -7,15 +10,13 @@ import { SLogger } from "@zwa73/utils";
 export class TableInitializer {
     /**初始化表结构
      * @param client 数据库客户端
-     * @param tableName 表名
-     * @param idField 唯一标识字段名
      */
-    static async initTable(client: DBClient, tableName: string, idField: string): Promise<void> {
+    static async initTable(client: DBClient): Promise<void> {
         try {
             // 先尝试删除表和相关对象
-            await client.query(`DROP TABLE IF EXISTS ${tableName};`);
-            await client.query(`DROP FUNCTION IF EXISTS func__${tableName}__before_insert_or_update();`);
-            await client.query(`DROP FUNCTION IF EXISTS set_${tableName}(text);`);
+            await client.query(`DROP TABLE IF EXISTS ${MOCK_TABLE_NAME};`);
+            await client.query(`DROP FUNCTION IF EXISTS func__${MOCK_TABLE_NAME}__before_insert_or_update();`);
+            await client.query(`DROP FUNCTION IF EXISTS set_${MOCK_TABLE_NAME}(text);`);
 
             // 创建通用函数
             await client.query(`
@@ -131,7 +132,7 @@ export class TableInitializer {
 
             // 创建表
             await client.query(`
-                CREATE TABLE IF NOT EXISTS ${tableName} (
+                CREATE TABLE IF NOT EXISTS ${MOCK_TABLE_NAME} (
                     order_id BIGSERIAL PRIMARY KEY NOT NULL,
                     data JSONB NOT NULL
                 );
@@ -141,9 +142,9 @@ export class TableInitializer {
             await client.query(`
                 DO $$
                 BEGIN
-                    IF NOT index_exists('idx__${tableName}__${idField}') THEN
-                        CREATE UNIQUE INDEX idx__${tableName}__${idField}
-                            ON ${tableName} ((data->>'${idField}'));
+                    IF NOT index_exists('idx__${MOCK_TABLE_NAME}__${MOCK_ID_FIELD}') THEN
+                        CREATE UNIQUE INDEX idx__${MOCK_TABLE_NAME}__${MOCK_ID_FIELD}
+                            ON ${MOCK_TABLE_NAME} ((data->>'${MOCK_ID_FIELD}'));
                     END IF;
                 END
                 $$;
@@ -151,13 +152,13 @@ export class TableInitializer {
 
             // 创建触发器函数 - 插入或更新前验证
             await client.query(`
-                CREATE FUNCTION func__${tableName}__before_insert_or_update()
+                CREATE FUNCTION func__${MOCK_TABLE_NAME}__before_insert_or_update()
                 RETURNS TRIGGER
                 LANGUAGE plpgsql AS $$
                 BEGIN
                     -- 非空验证
-                    IF NOT check_jsonb_string(NEW.data, '${idField}') THEN
-                        RAISE EXCEPTION '${tableName}.data->>${idField} 不能为空或null';
+                    IF NOT check_jsonb_string(NEW.data, '${MOCK_ID_FIELD}') THEN
+                        RAISE EXCEPTION '${MOCK_TABLE_NAME}.data->>${MOCK_ID_FIELD} 不能为空或null';
                     END IF;
                     RETURN NEW;
                 END;
@@ -166,69 +167,68 @@ export class TableInitializer {
 
             // 绑定触发器
             await client.query(`
-                CREATE TRIGGER trg__${tableName}__before_insert_or_update
-                BEFORE INSERT OR UPDATE ON ${tableName}
-                FOR EACH ROW EXECUTE FUNCTION func__${tableName}__before_insert_or_update();
+                CREATE TRIGGER trg__${MOCK_TABLE_NAME}__before_insert_or_update
+                BEFORE INSERT OR UPDATE ON ${MOCK_TABLE_NAME}
+                FOR EACH ROW EXECUTE FUNCTION func__${MOCK_TABLE_NAME}__before_insert_or_update();
             `);
 
             // 创建通用触发器
             await client.query(`
                 CREATE TRIGGER trg__common__before_insert_or_update
-                BEFORE INSERT OR UPDATE ON ${tableName}
+                BEFORE INSERT OR UPDATE ON ${MOCK_TABLE_NAME}
                 FOR EACH ROW EXECUTE FUNCTION func__common__before_insert_or_update();
             `);
 
             await client.query(`
                 CREATE TRIGGER trg__common__after_delete_or_insert_or_update
-                AFTER DELETE OR INSERT OR UPDATE ON ${tableName}
+                AFTER DELETE OR INSERT OR UPDATE ON ${MOCK_TABLE_NAME}
                 FOR EACH ROW EXECUTE FUNCTION func__common__after_delete_or_insert_or_update();
             `);
 
             // 创建读写函数
             await client.query(`
-                CREATE FUNCTION set_${tableName}(jsonstr text)
+                CREATE FUNCTION set_${MOCK_TABLE_NAME}(jsonstr text)
                 RETURNS VOID
                 LANGUAGE plpgsql AS $$
                 DECLARE
                     incoming jsonb := jsonstr::jsonb;
                 BEGIN
-                    IF NOT check_jsonb_string(incoming, '${idField}') THEN
-                        RAISE EXCEPTION '${idField} 不能为空';
+                    IF NOT check_jsonb_string(incoming, '${MOCK_ID_FIELD}') THEN
+                        RAISE EXCEPTION '${MOCK_ID_FIELD} 不能为空';
                     END IF;
 
                     IF EXISTS (
-                        SELECT 1 FROM ${tableName}
-                        WHERE data->>'${idField}' = incoming->>'${idField}'
+                        SELECT 1 FROM ${MOCK_TABLE_NAME}
+                        WHERE data->>'${MOCK_ID_FIELD}' = incoming->>'${MOCK_ID_FIELD}'
                     ) THEN
-                        UPDATE ${tableName}
+                        UPDATE ${MOCK_TABLE_NAME}
                         SET data = incoming
-                        WHERE data->>'${idField}' = incoming->>'${idField}';
+                        WHERE data->>'${MOCK_ID_FIELD}' = incoming->>'${MOCK_ID_FIELD}';
                     ELSE
-                        INSERT INTO ${tableName} (data)
+                        INSERT INTO ${MOCK_TABLE_NAME} (data)
                         VALUES (incoming);
                     END IF;
                 END;
                 $$;
             `);
 
-            SLogger.info(`表 ${tableName} 初始化完成`);
+            SLogger.info(`表 ${MOCK_TABLE_NAME} 初始化完成`);
         } catch (error) {
-            SLogger.error(`表 ${tableName} 初始化失败:`, error);
+            SLogger.error(`表 ${MOCK_TABLE_NAME} 初始化失败:`, error);
             throw error;
         }
     }
 
     /**删除表
      * @param client 数据库客户端
-     * @param tableName 表名
      */
-    static async dropTable(client: DBClient, tableName: string): Promise<void> {
+    static async dropTable(client: DBClient): Promise<void> {
         try {
             // 表名直接拼接到SQL语句中
-            await client.query(`DROP TABLE IF EXISTS ${tableName};`);
-            SLogger.info(`表 ${tableName} 删除完成`);
+            await client.query(`DROP TABLE IF EXISTS ${MOCK_TABLE_NAME};`);
+            SLogger.info(`表 ${MOCK_TABLE_NAME} 删除完成`);
         } catch (error) {
-            SLogger.error(`表 ${tableName} 删除失败:`, error);
+            SLogger.error(`表 ${MOCK_TABLE_NAME} 删除失败:`, error);
             throw error;
         }
     }

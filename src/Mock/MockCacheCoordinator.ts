@@ -1,12 +1,9 @@
 import type { DBJsonDataStruct } from "../JsonDataStruct";
 import { DBCacheCoordinator, DBOperation } from "../CacheCoordinator";
 import { SmartCache, match, extractOutcome } from "@zwa73/utils";
+import { PostgreSQLMockTool } from "./PostgreSQLMockTool";
 
-/**Mock表名常量 */
-export const MOCK_TABLE_NAME = "mock_test_table";
-
-/**Mock表唯一标识字段名 */
-export const MOCK_ID_FIELD = "test_id";
+const { MOCK_TABLE_NAME, MOCK_ID_FIELD } = PostgreSQLMockTool;
 
 /**缓存键类型 */
 export type MockCacheKey = `${typeof MOCK_TABLE_NAME}=${typeof MOCK_ID_FIELD}:${string}`;
