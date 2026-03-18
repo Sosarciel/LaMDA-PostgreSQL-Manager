@@ -1,3 +1,4 @@
 export * from "./TableInitializer";
-export * from "./MockCache";
 export * from "./MockTableAccesser";
+export * from "./MockCacheCoordinator";
+export * from "./MockJsonDataCacheCoordinator";

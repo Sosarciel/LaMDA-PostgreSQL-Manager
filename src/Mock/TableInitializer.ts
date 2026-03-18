@@ -17,6 +17,118 @@ export class TableInitializer {
             await client.query(`DROP FUNCTION IF EXISTS func__${tableName}__before_insert_or_update();`);
             await client.query(`DROP FUNCTION IF EXISTS set_${tableName}(text);`);
 
+            // 创建通用函数
+            await client.query(`
+                -- 类型验证
+                CREATE OR REPLACE FUNCTION
+                public.check_jsonb_string(js jsonb, key text)
+                RETURNS BOOLEAN
+                LANGUAGE plpgsql IMMUTABLE AS $$
+                BEGIN
+                    -- 字段不存在
+                    IF NOT (js ? key) THEN
+                        RETURN false;
+                    END IF;
+
+                    -- 类型不是字符串
+                    IF jsonb_typeof(js->key) IS DISTINCT FROM 'string' THEN
+                        RETURN false;
+                    END IF;
+
+                    -- 字符串为空或全是空格
+                    IF trim(js->>key) = '' THEN
+                        RETURN false;
+                    END IF;
+
+                    -- 通过所有检查
+                    RETURN true;
+                END;
+                $$;
+            `);
+
+            await client.query(`
+                -- 索引判断
+                CREATE OR REPLACE FUNCTION
+                public.index_exists(index_name TEXT)
+                RETURNS BOOLEAN
+                LANGUAGE plpgsql AS $$
+                BEGIN
+                    RETURN EXISTS (
+                        SELECT 1 FROM pg_indexes
+                        WHERE indexname = index_name
+                    );
+                END;
+                $$;
+            `);
+
+            await client.query(`
+                -- 合并并清洗jsonb
+                DROP FUNCTION IF EXISTS public.jsonb_merge_and_clean;
+                CREATE OR REPLACE FUNCTION
+                public.jsonb_merge_and_clean(
+                    incoming jsonb,
+                    original jsonb DEFAULT '{}'::jsonb
+                )
+                RETURNS jsonb
+                IMMUTABLE
+                LANGUAGE plpgsql AS $$
+                BEGIN
+                    RETURN jsonb_strip_nulls(
+                        COALESCE(original, '{}'::jsonb) ||
+                        COALESCE(incoming, '{}'::jsonb)
+                    );
+                END;
+                $$;
+            `);
+
+            // 共用before触发器
+            await client.query(`
+                CREATE OR REPLACE FUNCTION func__common__before_insert_or_update()
+                RETURNS TRIGGER
+                LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF pg_trigger_depth() = 1 THEN
+                        -- 更新 updated_at
+                        NEW.data := jsonb_set(NEW.data, '{updated_at}',
+                            to_jsonb(CURRENT_TIMESTAMP),true);
+
+                        -- 初始化 created_at
+                        IF  TG_OP = 'INSERT' AND
+                            NOT NEW.data ? 'created_at'
+                        THEN
+                            NEW.data := jsonb_set(NEW.data, '{created_at}',
+                                to_jsonb(CURRENT_TIMESTAMP),true);
+                        END IF;
+
+                        -- 合并清洗
+                        IF TG_OP = 'UPDATE' THEN
+                            NEW.data := jsonb_merge_and_clean(NEW.data, OLD.data);
+                        ELSIF TG_OP = 'INSERT' THEN
+                            NEW.data := jsonb_merge_and_clean(NEW.data);
+                        END IF;
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$;
+            `);
+
+            // 共用 after 触发器
+            await client.query(`
+                CREATE OR REPLACE FUNCTION func__common__after_delete_or_insert_or_update()
+                RETURNS trigger
+                LANGUAGE plpgsql AS $$
+                BEGIN
+                    PERFORM pg_notify('operation', json_strip_nulls(json_build_object(
+                        'op', LOWER(TG_OP),
+                        'table', TG_TABLE_NAME,
+                        'old', CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN row_to_json(OLD) ELSE NULL END,
+                        'new', CASE WHEN TG_OP IN ('UPDATE', 'INSERT') THEN row_to_json(NEW) ELSE NULL END
+                    ))::text);
+                    RETURN NULL;
+                END;
+                $$;
+            `);
+
             // 创建表
             await client.query(`
                 CREATE TABLE IF NOT EXISTS ${tableName} (
@@ -119,14 +231,5 @@ export class TableInitializer {
             SLogger.error(`表 ${tableName} 删除失败:`, error);
             throw error;
         }
-    }
-
-    /**初始化通用函数
-     * @param client 数据库客户端
-     */
-    static async initCommonFunctions(client: DBClient): Promise<void> {
-        // 通用函数已经由DBManager.create初始化
-        // 这里不需要重复初始化
-        SLogger.info("通用函数已由DBManager初始化");
     }
 }

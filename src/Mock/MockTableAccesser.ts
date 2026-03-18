@@ -1,8 +1,9 @@
 import type { DBClient } from "../Client";
 import type { DBManager } from "../Manager";
 import type { DBJsonDataStruct } from "../JsonDataStruct";
+import { DBCacheCoordinator } from "../CacheCoordinator";
 import { SLogger, throwError } from "@zwa73/utils";
-import { MockCache } from "./MockCache";
+import { MockCacheCoordinator, MockCacheTypeSet, MOCK_TABLE_NAME, MOCK_ID_FIELD, createCacheKey } from "./MockCacheCoordinator";
 
 /**模拟表访问器选项 */
 export type MockAccessOpt = {
@@ -15,28 +16,26 @@ export type MockAccessOpt = {
  */
 export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
     private manager: DBManager;
-    private tableName: string;
-    private idField: string;
-    private cache: MockCache<T>;
+    private cache: DBCacheCoordinator<MockCacheTypeSet>;
 
     /**构造函数
      * @param manager 数据库管理器
-     * @param tableName 表名
-     * @param idField 唯一标识字段名
      */
-    constructor(manager: DBManager, tableName: string, idField: string) {
+    constructor(manager: DBManager) {
         this.manager = manager;
-        this.tableName = tableName;
-        this.idField = idField;
-        this.cache = new MockCache<T>();
+        this.cache = MockCacheCoordinator;
+        
+        // 订阅数据库通知
+        this.subscribeNotify();
     }
 
-    /**生成缓存键
-     * @param id 唯一标识值
-     * @returns 缓存键
-     */
-    private getCacheKey(id: string): string {
-        return `${this.tableName}=${this.idField}:${id}`;
+    /**订阅数据库通知 */
+    private async subscribeNotify() {
+        try {
+            await this.cache.subscribeNotify(this.manager, 'operation');
+        } catch (e) {
+            SLogger.warn(`订阅数据库通知失败:`, e);
+        }
     }
 
     /**执行事务
@@ -51,16 +50,15 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
      * @param opt 选项
      */
     async insertOrUpdate(data: T, opt?: MockAccessOpt): Promise<void> {
-        const cacheKey = this.getCacheKey((data.data as any)[this.idField] as string);
         const client = opt?.client || this.manager.client;
 
         try {
-            await client.query(`SELECT set_${this.tableName}('${JSON.stringify(data.data)}');`);
-            // 立即通知缓存
-            this.cache.proc(cacheKey, { op: 'set', table: this.tableName, new: data });
+            await client.query(`SELECT set_${MOCK_TABLE_NAME}('${JSON.stringify(data.data)}');`);
+            // 通知缓存
+            await this.cache.proc({ op: 'set', table: MOCK_TABLE_NAME, new: data });
         } catch (e) {
             SLogger.error(e);
-            throwError(`${this.tableName} 插入或更新失败`, 'error');
+            throwError(`${MOCK_TABLE_NAME} 插入或更新失败`, 'error');
         }
     }
 
@@ -70,22 +68,21 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
      * @returns 数据
      */
     async getData(id: string, opt?: MockAccessOpt): Promise<T | undefined> {
-        const cacheKey = this.getCacheKey(id);
+        const cacheKey = createCacheKey(id);
         return await this.cache.getOrSetCache(cacheKey, async () => {
             const client = opt?.client || this.manager.client;
-
             try {
                 const result = await client.query(`
-                    SELECT * FROM ${this.tableName}
-                    WHERE data->>'${this.idField}' = '${id}';
+                    SELECT * FROM ${MOCK_TABLE_NAME}
+                    WHERE data->>'${MOCK_ID_FIELD}' = '${id}';
                 `);
                 if (result.rowCount === 0) return;
                 return result.rows[0] as T;
             } catch (e) {
-                SLogger.warn(`${this.tableName} 获取数据失败`, e);
+                SLogger.warn(`${MOCK_TABLE_NAME} 获取数据失败`, e);
                 return;
             }
-        });
+        }) as T | undefined;
     }
 
     /**删除数据
@@ -93,31 +90,69 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
      * @param opt 选项
      */
     async deleteData(id: string, opt?: MockAccessOpt): Promise<void> {
-        const cacheKey = this.getCacheKey(id);
         const client = opt?.client || this.manager.client;
 
         try {
             await client.query(`
-                DELETE FROM ${this.tableName}
-                WHERE data->>'${this.idField}' = '${id}';
+                DELETE FROM ${MOCK_TABLE_NAME}
+                WHERE data->>'${MOCK_ID_FIELD}' = '${id}';
             `);
-            // 立即通知缓存
-            this.cache.proc(cacheKey, { op: 'delete', table: this.tableName, old: { data: { [this.idField]: id } } as T });
+            // 通知缓存
+            await this.cache.proc({ op: 'delete', table: MOCK_TABLE_NAME, old: { data: { [MOCK_ID_FIELD]: id } } as unknown as T });
         } catch (e) {
             SLogger.error(e);
-            throwError(`${this.tableName} 删除失败`, 'error');
+            throwError(`${MOCK_TABLE_NAME} 删除失败`, 'error');
         }
     }
 
     /**清除缓存 */
     clearCache(): void {
-        this.cache.clear();
+        this.cache.cache.clean();
     }
 
-    /**获取缓存大小
-     * @returns 缓存大小
+    /**检查缓存是否存在
+     * @param id 唯一标识值
+     * @returns 是否存在
      */
-    getCacheSize(): number {
-        return this.cache.size();
+    hasCache(id: string): boolean {
+        const cacheKey = createCacheKey(id);
+        return this.cache.hasCache(cacheKey);
+    }
+
+    /**查看缓存数据
+     * @param id 唯一标识值
+     * @returns 缓存数据
+     */
+    peekCache(id: string): T | undefined {
+        const cacheKey = createCacheKey(id);
+        return this.cache.peekCache(cacheKey) as T | undefined;
+    }
+
+    /**获取缓存协调器
+     * @returns 缓存协调器
+     */
+    getCacheCoordinator(): DBCacheCoordinator<MockCacheTypeSet> {
+        return this.cache;
+    }
+
+    /**注入缓存协调器
+     * @param cacheCoordinator 缓存协调器
+     */
+    injectCacheCoordinator(cacheCoordinator: DBCacheCoordinator<MockCacheTypeSet>): void {
+        this.cache = cacheCoordinator;
+    }
+
+    /**获取表名
+     * @returns 表名
+     */
+    getTableName(): string {
+        return MOCK_TABLE_NAME;
+    }
+
+    /**获取唯一标识字段名
+     * @returns 唯一标识字段名
+     */
+    getIdField(): string {
+        return MOCK_ID_FIELD;
     }
 }

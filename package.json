@@ -2,6 +2,16 @@
 	"name": "@sosraciel-lamda/postgresql-manager",
 	"version": "1.0.48",
 	"main": "dist/index.js",
+	"exports": {
+		".": {
+			"require": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		},
+		"./mock": {
+			"require": "./dist/mock/index.js",
+			"types": "./dist/mock/index.d.ts"
+		}
+	},
 	"scripts": {
 		"test": "jest",
 		"build": "powershell scripts/pack",
