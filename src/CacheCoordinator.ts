@@ -173,6 +173,11 @@ export class DBCacheCoordinator<
     hasCache<K extends SET['key']>(key:K){
         return this.cache.has(key);
     }
+    
+    /**清理缓存资源 */
+    dispose(){
+        this.cache.dispose();
+    }
 }
 
 type LastRow<T extends DBOperation<string,unknown>> = T extends { new: infer R } ? R : T extends { old: infer R } ? R : never;
