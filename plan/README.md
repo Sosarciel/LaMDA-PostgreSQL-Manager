@@ -11,7 +11,7 @@ aliases: [PostgreSQL-Manager 实施计划索引]
 ```base
 filters:
   and:
-    - file.path.startsWith("LaMDA-Module/Service-Manager/PostgreSQL-Manager/plan")
+    - file.folder == "LaMDA-Module/Service-Manager/PostgreSQL-Manager/plan"
     - file.name != "README"
 views:
   - type: table
