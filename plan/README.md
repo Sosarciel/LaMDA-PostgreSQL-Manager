@@ -1,9 +1,9 @@
 ---
-aliases: [PostgreSQL-Manager 实施计划索引]
+aliases: [PostgreSQL-Manager 计划索引]
 ---
-# PostgreSQL-Manager 实施计划索引
+# PostgreSQL-Manager 计划索引
 
-> 本文档索引 PostgreSQL-Manager 模块的所有实施计划
+> 本文档索引 PostgreSQL-Manager 模块的所有计划文档
 
 ---
 
