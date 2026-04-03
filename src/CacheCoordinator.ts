@@ -285,9 +285,10 @@ SET extends JsonCacheEntry,
 
         // 尝试提取新数据
         const newdata = await match(notify.op, {
-            // 若为快照, 不主动拉取新数据维护 直接返回
-            insert: async () => (await fixedOpt?.isSnapshot?.(lastRow)) ? this.cache.remove(key) : await fixedOpt.unwarp(lastRow),
-            update: async () => (await fixedOpt?.isSnapshot?.(lastRow)) ? this.cache.remove(key) : await fixedOpt.unwarp(lastRow),
+            // insert/update可能快于set 如果采用 tryUnwarpNotifyData ?? CachePool.remove 将会导致已有的ref.data被删除
+            // 进而导致set的更新无法正确刷入旧的ref.data
+            insert: async () => this.cache.has(key) ? await fixedOpt.unwarp(lastRow) : undefined,
+            update: async () => this.cache.has(key) ? await fixedOpt.unwarp(lastRow) : undefined,
             // 主动set一定触发完整解包
             set: async () => {
                 const unwarpedData = await fixedOpt.unwarp(lastRow);
