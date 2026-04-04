@@ -308,7 +308,7 @@ SET extends JsonCacheEntry,
             insert: () => this.tryUpdateCache(key, newdata),
             update: () => this.tryUpdateCache(key, newdata),
             set: () => this.cache.has(key)
-                ? this.tryUpdateCache(key, newdata, true)
+                ? this.tryUpdateCache(key, newdata)
                 : this.cache.set(key, newdata),
         });
     }
@@ -316,12 +316,10 @@ SET extends JsonCacheEntry,
     /**尝试更新某个缓存
      * @param key     - 缓存键
      * @param newdata - 新数据
-     * @param isSet   - 是否为set操作, set操作将会在本地额外运行一次 jsonb_merge_and_clean 模拟数据库行为, 其他操作视为完全同步
      */
     async tryUpdateCache<K extends SET['key']>(
         key: K,
-        newdata: ExtStruct<SET, K>,
-        isSet = false
+        newdata: ExtStruct<SET, K>
     ) {
         const cacheData = this.cache.peek(key);
         if (cacheData == undefined) return;
@@ -330,16 +328,15 @@ SET extends JsonCacheEntry,
         const targetData = cacheData.data as JObject;
         const sourceData = newdata.data as JObject;
 
-        const newData = isSet
-            ? UtilDB.mergeAndClean(targetData,sourceData)
-            : sourceData;
+        // 递归清理 undefined（JSON 不支持 undefined）
+        UtilDB.cleanUndefined(sourceData);
 
         // 删除未出现在新数据中的字段
         for (const k of Object.keys(targetData)) {
-            if (!(k in newData)) delete targetData[k];
+            if (!(k in sourceData)) delete targetData[k];
         }
 
-        // 完整合并
-        Object.assign(targetData, newData);
+        // 完整合并（全量替换）
+        Object.assign(targetData, sourceData);
     }
 }

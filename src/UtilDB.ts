@@ -3,7 +3,6 @@ import crypto from 'crypto';
 
 
 
-
 export class UtilDB{
     /**将js的 Date对象 转为pgsql所用的 带时区时间戳文本 */
     static toPgTimestampZ(date = new Date()) {
@@ -56,5 +55,33 @@ export class UtilDB{
             result[key] = val;
         }
         return result as B&T;
+    }
+    /**递归清理数据中的 undefined 值
+     * JSON.stringify 行为：
+     * - 对象中的 undefined：key 被删除
+     * - 数组中的 undefined：转为 null
+     * @param data - 要清理的数据
+     */
+    static cleanUndefined(data: unknown): void {
+        if (data === null || typeof data !== 'object') return;
+
+        if (Array.isArray(data)) {
+            for (let i = 0; i < data.length; i++) {
+                if (data[i] === undefined) {
+                    data[i] = null;
+                } else if (typeof data[i] === 'object' && data[i] !== null) {
+                    this.cleanUndefined(data[i]);
+                }
+            }
+        } else {
+            const obj = data as Record<string, unknown>;
+            for (const key of Object.keys(obj)) {
+                if (obj[key] === undefined) {
+                    delete obj[key];
+                } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+                    this.cleanUndefined(obj[key]);
+                }
+            }
+        }
     }
 }
