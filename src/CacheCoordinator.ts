@@ -203,8 +203,7 @@ type JsonCacheEntry =
 
 /**针对单列json数据的缓存协调器
  * 将会依照option以 weight=0 的事件自动处理标准行缓存
- * 需配合 DBJsonDataStruct 与 jsonb_merge_and_clean BEFORE 触发器
- * 确保sql处理data列时, 浅层合并, undefined 为忽略 null 为删除(合并后jsonb_strip_nulls), 浅层不存储null
+ * 需配合 DBJsonDataStruct
  */
 export class DBJsonDataCacheCoordinator<
 SET extends JsonCacheEntry,
