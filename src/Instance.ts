@@ -61,6 +61,12 @@ export class DBInstance{
             client.on('notice', msg=>
                 SLogger.info(`PostgreSQL NOTICE: ${msg.message}`));
         });
+        //必须消费连接池的 error 事件: 空闲连接被外部中断时 pg-pool 会 emit('error'),
+        //而 EventEmitter 在无 error 监听时会直接抛出未捕获异常, 导致进程 fail-fast 退出。
+        //此类掉线属可恢复情况, 连接池会自动重建连接, 记录后忽略即可。
+        this._pool.on('error', err=>{
+            SLogger.warn(`PostgreSQL 连接池空闲连接断开, 连接池将自动重建`, err);
+        });
     };
     static async start (option:DBOption):Promise<DBInstance>{
         let pgProcess:ChildProcessWithoutNullStreams|undefined=undefined;

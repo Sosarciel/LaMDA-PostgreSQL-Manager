@@ -1,8 +1,18 @@
-import { AwaitInited, EventSystem, JObject, MPromise, NeedInit, SmartCache } from "@zwa73/js-utils";
+import { AwaitInited, EventSystem, JObject, MPromise, NeedInit, PromiseFlight, SmartCache } from "@zwa73/js-utils";
+import type { PoolClient } from "pg";
 import { DBManager } from "./Manager";
 import { assertType, ivk, match, SLogger } from "@zwa73/utils";
 import { DBJsonDataStruct } from "./JsonDataStruct";
 import { UtilDB } from "./UtilDB";
+
+/**退避等待 定时器 unref 不阻止进程退出 */
+const wait = (ms: number) => new Promise<void>(resolve => {
+    setTimeout(resolve, ms).unref();
+});
+/**重连退避基础间隔 毫秒 */
+const RETRY_BASE_MS = 1000;
+/**重连退避间隔上限 毫秒 */
+const RETRY_MAX_MS = 60_000;
 
 type CacheEntry =
     | {key:string,struct:object}
@@ -77,53 +87,115 @@ export class DBCacheCoordinator<
     })=>MPromise<void>;
 }>{
     cache:SmartCache<SET['key'],SET['struct']>;
+    private notifyClient: PoolClient | undefined;
     constructor(arg:{ cache:SmartCache<SET['key'],SET['struct']> }){
         super();
         this.cache = arg.cache;
     }
     /**使缓存协调器订阅数据库的操作通知频道
+     * 连接失败与运行中断线共用同一套重试逻辑, 并按指数退避重连
      * @param mgr           - 数据库管理器
-     * @param tarhetChannel - 订阅目标频道
+     * @param targetChannel - 订阅目标频道
      */
-    async subscribeNotify(mgr:DBManager, tarhetChannel:string){
-        const setupListener = async () => {
-            //清空当前缓存
+    async subscribeNotify(mgr: DBManager, targetChannel: string) {
+        /**连续重连次数, 连接成功后清零 */
+        let retryCount = 0;
+        /**重连单飞去重器, 同一频道并发只保留一条重连链 */
+        const flight = new PromiseFlight();
+
+        /**摘除当前连接并清理监听器, 避免重连时泄漏
+         * 以 release(true) 销毁而非归还连接池: 该链接带有 LISTEN 状态与自定义监听器, 不可复用
+         */
+        const detach = () => {
+            const cur = this.notifyClient;
+            if (cur == undefined) return;
+            this.notifyClient = undefined;
+            try {
+                cur.removeAllListeners();
+                cur.release(true);
+            } catch {}
+        };
+
+        // 释放上一个 subscribeNotify 订阅的链接, 避免重复订阅时泄漏
+        detach();
+
+        /**安排下一次重连 指数退避且不超过上限
+         * 并发调用已被 flight 按频道去重, 复用同一条重连链
+         */
+        const scheduleRetry = async () => {
+            if (mgr.exiting || mgr.stoping) return detach();
+            // 释放上一个链接, 避免重连时泄漏
+            detach();
+
+            const delay = Math.min(RETRY_BASE_MS * 2 ** retryCount, RETRY_MAX_MS);
+            retryCount++;
+            SLogger.warn(`DBCacheCoordinator.subscribeNotify ${delay}ms 后重连`);
+
+            //在下一个 setup 前 detach 必定完成
+            await wait(delay);
+            //不等待 setup 完成: 尽快交还 flight 的频道key, 使后续重连排程不被本链占位阻塞
+            void setup();
+        };
+
+        const setup = async () => {
+            if (mgr.exiting || mgr.stoping) return detach();
+            //先让出一个宏任务位再发起连接
+            //setup 可能由 flight 的 task 直接调起, 此时该频道的key仍被持有; 若连接在微任务内立刻失败,
+            //下方 catch 中的 flight.run 会撞上自己的占位而静默返回, 重连链就此断掉不会再重试
+            //宏任务必定排在 microtask 队列清空之后, 让出后key已释放, catch 中的重排必定生效
+            await wait(100);
+            // 清空当前缓存
             this.cache.clean();
-            const listener = await mgr._pool.connect();
-            await listener.query(`LISTEN ${tarhetChannel};`);
-            // 处理通知
-            listener.on('notification', async msg => {
-                const { channel, payload } = msg;
-                if(channel !== tarhetChannel) return;
-                if(payload == undefined ) return;
-                try{
-                    const notify = JSON.parse(payload) as ExtNotify<SET>;
-                    await this.proc(notify);
-                }catch(err){
-                    SLogger.error(`DBCacheCoordinator.subscribeNotify 处理通知失败`,err);
-                }
-            });
-            // 监听错误和结束, 触发重连
-            listener.on('error', async err => {
-                if(mgr.exiting || mgr.stoping) return;
-                SLogger.error(`DBCacheCoordinator.subscribeNotify listener错误, 开始重连`,err);
-                try { listener.release(); } catch {}
-                setTimeout(setupListener, 2000); // 延迟重连
-            });
-            listener.on('end', async () => {
-                if(mgr.exiting || mgr.stoping) return;
-                SLogger.warn(`DBCacheCoordinator.subscribeNotify listener断开, 开始重连`);
-                try { listener.release(); } catch {}
-                setTimeout(setupListener, 2000);
-            });
-            mgr.registerEvent('onstop',{handler:async ()=>{
-                try{
-                    listener.removeAllListeners();
-                    listener.release();
-                }catch{}
-            }})
-        }
-        await setupListener();
+
+            try {
+                const cur = await mgr._pool.connect();
+                this.notifyClient = cur;
+                await cur.query(`LISTEN ${targetChannel};`);
+
+                // 建立期间可能已开始关停, 此链接作废
+                if (mgr.exiting || mgr.stoping) return detach();
+
+                // 连接成功 重置退避次数
+                retryCount = 0;
+
+                // 处理通知
+                cur.on('notification', async msg => {
+                    const { channel, payload } = msg;
+                    if (channel !== targetChannel || payload == undefined) return;
+                    try {
+                        const notify = JSON.parse(payload) as ExtNotify<SET>;
+                        await this.proc(notify);
+                    } catch (err) {
+                        SLogger.error(`DBCacheCoordinator.subscribeNotify 处理通知失败`, err);
+                    }
+                });
+
+                // 监听错误和结束, 触发重连
+                // 用 once 而非 on: 触发即自动摘除, error 与 end 连发时不会重复排程
+                cur.once('error', err => {
+                    SLogger.error(`DBCacheCoordinator.subscribeNotify listener错误, 开始重连`, err);
+                    void flight.run(targetChannel, scheduleRetry);
+                });
+                cur.once('end', () => {
+                    SLogger.warn(`DBCacheCoordinator.subscribeNotify listener断开, 开始重连`);
+                    void flight.run(targetChannel, scheduleRetry);
+                });
+
+            } catch (err) {
+                // 连接失败与断线走同一重试路径, 不向外冒泡
+                // 若在此处抛出, 将成为无人接管的 rejection 并触发进程级的 fail-fast 退出
+                SLogger.warn(`DBCacheCoordinator.subscribeNotify 订阅失败, 稍后重试`, err);
+                void flight.run(targetChannel, scheduleRetry);
+            }
+        };
+
+        // 固定 id 注册一次, 重连不会重复堆积处理器
+        mgr.registerEvent('onstop', {
+            id: 'db-cache-subscribe-notify',
+            handler: detach
+        });
+
+        await setup();
     }
     /**获取缓存 */
     getCache<K extends SET['key']>(key:K):ExtStruct<SET,K>|undefined{
