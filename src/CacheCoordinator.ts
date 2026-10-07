@@ -260,7 +260,7 @@ export type DBJsonDataCacheCoordinatorOption<SET extends CacheEntry>= {
         /**解包通知为行数据
          * 如果是快照则应该在此直接从数据库拉取全量数据
          */
-        unwarp:(row:LastRow<Extract<ExtNotify<SET>,{table:K}>>)=>MPromise<Extract<SET,{notify:{table:K}}>['struct']>,
+        unwarp:(row:LastRow<Extract<ExtNotify<SET>,{table:K}>>)=>MPromise<Extract<SET,{notify:{table:K}}>['struct']|undefined>,
         /**判断是否需要从数据库拉取全量数据 */
         isSnapshot?:(row:LastRow<Extract<ExtNotify<SET>,{table:K}>>)=>MPromise<boolean>,
         /**获取用于去重的hash */
@@ -276,14 +276,17 @@ type JsonCacheEntry =
 /**针对单列json数据的缓存协调器
  * 将会依照option以 weight=0 的事件自动处理标准行缓存
  * 需配合 DBJsonDataStruct
+ * @template JSONSET  - 声明需自动化处理的标准 JSON 实体表，需包含所有表单（受 JsonCacheEntry 约束）
+ * @template SET      - 底层缓存池实际容纳的全量条目集，可以接受表单衍生缓存（受 CacheEntry 约束，默认与 SET 相同）
  */
 export class DBJsonDataCacheCoordinator<
-SET extends JsonCacheEntry,
+    JSONSET extends JsonCacheEntry,
+    SET extends CacheEntry = JSONSET
 > extends DBCacheCoordinator<SET> implements NeedInit{
     inited:Promise<void>;
-    option:DBJsonDataCacheCoordinatorOption<SET>;
+    option:DBJsonDataCacheCoordinatorOption<JSONSET>;
     constructor(arg:{
-        option:DBJsonDataCacheCoordinatorOption<SET>,
+        option:DBJsonDataCacheCoordinatorOption<JSONSET>,
         cache:SmartCache<SET['key'],SET['struct']>
     }){
         super(arg);
@@ -291,8 +294,9 @@ SET extends JsonCacheEntry,
         // 注册标准行缓存
         this.inited = ivk(async ()=>{
             for(const table in this.option.table){
-                const tableName = table as ExtNotify<SET>['table'];
-                this.registerEvent(table,{
+                const tableName = table as ExtNotify<JSONSET>['table'];
+                this.registerEvent(tableName,{
+                    //@ts-ignore 与 proc 相同：遍历动态表名注册时，TS 无法在泛型内自动分发联合事件签名
                     handler:async ({notify})=>{
                         const fixedOpt = this.option.table[tableName];
                         if (!fixedOpt) return;
@@ -300,7 +304,7 @@ SET extends JsonCacheEntry,
                         const lastRow = (('new' in notify) ? notify.new : notify.old) as LastRow<typeof notify>;
                         const key = await fixedOpt.getKey(lastRow);
 
-                        await this.procStandardEvent(key, notify);
+                        await this.procStandardEvent(key, notify as Extract<ExtNotify<JSONSET>, { table: typeof tableName }>);
                     }
                 })
             }
@@ -309,17 +313,17 @@ SET extends JsonCacheEntry,
 
     @AwaitInited
     override async proc(notify: ExtNotify<SET>): Promise<void> {
-        const tableName = notify.table as keyof DBJsonDataCacheCoordinatorOption<SET>['table'];
+        const tableName = notify.table as keyof DBJsonDataCacheCoordinatorOption<JSONSET>['table'];
         const fixedOpt = this.option.table[tableName];
         if (fixedOpt == undefined) {
             SLogger.warn(`DBJsonDataCacheCoordinator.proc 错误 未配置表单${notify.table}`);
             return;
         }
 
-        // @ts-ignore 因为泛型函数的动态调用, TS 很难完美匹配 this.invokeEvent 的联合类型, 这里可以用 ts-ignore 豁免
+        // @ts-ignore 因为泛型函数的动态调用, TS 很难完美匹配 this.invokeEvent 的联合类型, 这里 GPU/TS 可以用 ts-ignore 豁免
         await this.invokeEvent(notify.table, { coordinator: this, notify });
         // @ts-ignore
-        await this.invokeEvent('onNotify'  , { coordinator: this, notify });
+        await this.invokeEvent('onNotify'   , { coordinator: this, notify });
     }
 
     /**处理标准行缓存
@@ -327,15 +331,16 @@ SET extends JsonCacheEntry,
      * @param notify - 通知
      */
     @AwaitInited
-    async procStandardEvent<K extends SET['key']>(
+    async procStandardEvent<K extends JSONSET['key']>(
         key: K,
-        notify: Extract<ExtNotify<SET>, { table: string }>
+        notify: Extract<ExtNotify<JSONSET>, { table: string }>
     ): Promise<void> {
         // 直接处理delete
+        // delete 无需unwarp全量数据 直接返回
         if(notify.op == 'delete')
             return void this.cache.remove(key);
 
-        const tableName = notify.table as keyof DBJsonDataCacheCoordinatorOption<SET>['table'];
+        const tableName = notify.table as keyof DBJsonDataCacheCoordinatorOption<JSONSET>['table'];
         const fixedOpt = this.option.table[tableName];
         if(fixedOpt == undefined){
             SLogger.warn(`DBJsonDataCacheCoordinator.procStandardEvent 错误 未配置表单${notify.table}`);
@@ -346,18 +351,28 @@ SET extends JsonCacheEntry,
         const lastRow = notify.new as LastRow<typeof notify>;
 
         // 依照hash去重
-        const cacheKey = await fixedOpt.getKey(lastRow);
-        const cacheData = this.cache.peek(cacheKey);
+        const cacheData = this.cache.peek(key);
         if (cacheData != undefined){
-            const cacheHash = await fixedOpt.getHash?.(cacheData);
+            const cacheHash = await fixedOpt.getHash?.(cacheData as ExtStruct<JSONSET, JSONSET['key']>);
             if(cacheHash != undefined && cacheHash == (await fixedOpt.getHash?.(lastRow)))
                 return;
         }
 
+        // created_at 缓存同步问题说明：
+        // 1. setConversation 设置缓存, created_at 完全由数据库触发器生成, ts端没有 created_at
+        // 2. SQL INSERT/UPDATE 触发，发送 insert/update 通知
+        // 3. insert 通知快于 set 时，缓存不存在，insert 被 CachePool.has(key) 防积极水化逻辑拦截而忽略
+        // 4. insert 通知后到 或下一次 update 通知到达时，由于 data_hash 去重逻辑会排除 created_at 字段计算hash，update/insert 被跳过
+        // 5. 导致 created_at 永远不会同步到缓存, 同理其他被 data_hash 忽略的字段也都不可能同步到本地缓存
+        // 
+        // 这是预期行为：去重逻辑避免重复处理，但代价是 created_at 不会同步
+        // 解决方案：需要 created_at 时使用 ignoreCache:true 从数据库获取
+
         // 尝试提取新数据
         const newdata = await match(notify.op, {
             // insert/update可能快于set 如果采用 tryUnwarpNotifyData ?? CachePool.remove 将会导致已有的ref.data被删除
-            // 进而导致set的更新无法正确刷入旧的ref.data
+            // 进而导致set的更新无法正确刷入旧的ref.data, 即变为先彻底删除缓存再set入新缓存, 导致活跃 Entity 的ref数据与缓存数据断链
+            // 即便 insert/update 慢于set, 后续通知依然会导致活跃 Entity 断链, 故必须维护存在的缓存, 不能主动remove
             insert: async () => this.cache.has(key) ? await fixedOpt.unwarp(lastRow) : undefined,
             update: async () => this.cache.has(key) ? await fixedOpt.unwarp(lastRow) : undefined,
             // 主动set一定触发完整解包
@@ -373,11 +388,16 @@ SET extends JsonCacheEntry,
         });
 
         if (newdata == undefined) return;
-        assertType<ExtStruct<SET, K>>(newdata);
+        //断言永远不为delete
+        assertType<ExtStruct<JSONSET, K>>(newdata);
 
+        // insert update delete 为数据库直接通知
+        // set 为手动同步 实际上不会拉取数据
         await match(notify.op, {
+            //如果直接得到数据则维护
             insert: () => this.tryUpdateCache(key, newdata),
             update: () => this.tryUpdateCache(key, newdata),
+             //如果缓存存在则更新,不存在则设置新缓存
             set: () => this.cache.has(key)
                 ? this.tryUpdateCache(key, newdata)
                 : this.cache.set(key, newdata),
@@ -388,15 +408,15 @@ SET extends JsonCacheEntry,
      * @param key     - 缓存键
      * @param newdata - 新数据
      */
-    async tryUpdateCache<K extends SET['key']>(
+    async tryUpdateCache<K extends JSONSET['key']>(
         key: K,
-        newdata: ExtStruct<SET, K>
+        newdata: ExtStruct<JSONSET, K>
     ) {
         const cacheData = this.cache.peek(key);
         if (cacheData == undefined) return;
 
         // 因为 DBJsonDataStruct 是 DeepReadonly, 在内部执行变异时, 我们显式转为字典态进行安全操作
-        const targetData = cacheData.data as JObject;
+        const targetData = (cacheData as ExtStruct<JSONSET, K>).data as JObject;
         const sourceData = newdata.data as JObject;
 
         // 递归清理 undefined（JSON 不支持 undefined）
