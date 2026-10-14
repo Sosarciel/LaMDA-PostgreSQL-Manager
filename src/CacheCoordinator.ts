@@ -189,9 +189,11 @@ export class DBCacheCoordinator<
             }
         };
 
-        // 固定 id 注册一次, 重连不会重复堆积处理器
+        // id 需按频道区分: 多个 coordinator 实例会向同一个 mgr 注册, 而 EventSystem 以 id 为键,
+        // 固定 id 会被后注册者覆盖, 使先注册者的 detach 丢失,
+        // 其 notifyClient 将永不归还, 导致 pool.end() 一直等待该连接而挂起
         mgr.registerEvent('onstop', {
-            id: 'db-cache-subscribe-notify',
+            id: `db-cache-subscribe-notify-${targetChannel}`,
             handler: detach
         });
 
