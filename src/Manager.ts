@@ -1,5 +1,5 @@
 import path from 'pathe';
-import { EventSystem, MPromise, PromiseQueue, SLogger, throwError, UtilFT, UtilFunc } from "@zwa73/utils";
+import { EventSystem, MPromise, PromiseQueue, SLogger, throwError, UtilFT, UtilFunc, ExitCoordinator } from "@zwa73/utils";
 import fs from 'fs';
 import { Pool, PoolClient } from 'pg';
 import { DBInstance } from './Instance';
@@ -37,21 +37,32 @@ export class DBManager extends EventSystem<{
         manager.instance = await DBInstance.start(fixedOption);
 
         //#region 处理退出逻辑
-        const handleExit = (code:number)=>async () => {
-            if(manager.exiting) return;
-            manager.exiting = true;
-            await manager.stop();
-            process.exit(code);
-        };
-        process.on('SIGTERM', handleExit(0));
-        process.on('SIGINT', handleExit(0));
-        process.on('uncaughtException', async (err) => {
-            SLogger.fatal('未捕获的异常:', err);
-            await handleExit(1)();
-        });
-        process.on('unhandledRejection', async (reason, promise) => {
-            SLogger.fatal('未捕获的拒绝:', reason);
-            await handleExit(1)();
+        //
+        // ⚠️ **只注册回调, 不自己装 `process.on`**（踩过的坑）
+        //
+        // 早先这里是 `process.on('uncaughtException', ...)` + `process.exit(code)`。
+        // 但 `process.on` **允许多个监听器** —— 同一个异常会同时触发所有装了
+        // 退出守护的模块（此处 + AutoDL-Manager）。而本模块的 `stop()` **极快**
+        // （基本只有 `pool.end()`），紧接着就 `process.exit(1)`，于是把
+        // AutoDL-Manager 需要 ~7 秒（含 SSH 重试）的收尾**拦腰斩断** ——
+        // 后果是**云实例没被关停、持续计费**。
+        //
+        // 实测（2026-10-16, LaMDA test-server）：
+        // ```
+        // 01:47:16.0  read ECONNRESET
+        //             ├─ AutoDL-Manager : 开始收尾（需 ~7 秒）
+        //             └─ PostgreSQL-Mgr : stop() 毫秒级 → process.exit(1) ★
+        // 01:47:16.x  AutoDL 的收尾被斩断（连第一个日志点都没走到）
+        // ```
+        //
+        // 现在改为向 `ExitCoordinator` 注册，由它统一串行编排并**唯一**负责退出。
+        ExitCoordinator.register({
+            name: 'PostgreSQLManager',
+            handler: async () => {
+                if (manager.exiting) return;
+                manager.exiting = true;
+                await manager.stop();
+            },
         });
         //#endregion
 
