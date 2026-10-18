@@ -158,13 +158,34 @@ export class MockTableAccesser<T extends DBJsonDataStruct<{}>> {
         return this.cache;
     }
 
-    /**注入缓存协调器
+    /**注入缓存协调器**并等订阅就绪**
+     * #region
+     * ## 为什么是 `async`、为什么必须 `await`
+     * 订阅本身是**异步**的：`subscribeNotify` 内部要 `_pool.connect()` 再 `LISTEN`，
+     * 期间还有一次 `await wait(100)`（见 `CacheCoordinator.setup`）。
+     * 实测（2026-10-19）：`injectCacheCoordinator` 返回后 **+60ms** 时
+     * `notifyClient` 仍是 `undefined`，**+120ms** 才真正挂上。
+     *
+     * 若调用方不等就去做写库操作，那条 `UPDATE` 会落在**聋窗**里 ——
+     * PostgreSQL **不会补发**未订阅期间的通知，于是这次变更永久丢失，
+     * 缓存停在旧值且**没有任何报错**（`tryUpdateCache` 开头
+     * `if (cacheData == null) return;` 之外，即便命中也是静默覆盖）。
+     *
+     * ## 与生产写法对齐
+     * 生产侧两个调用点都是「先 await 订阅，再 init」：
+     * ```
+     * UserDomain  : await DBCache.subscribeNotify(manager, 'operation');
+     * DialogStore : await DBCache.subscribeNotify(manager, 'dialog_operation');
+     * ```
+     * 唯独这里曾把这个 `async` 当同步调用丢掉 —— 全仓唯一一处。
+     * 现在改成同样的契约：**返回即代表订阅已就绪**。
+     * #endregion
      * @param cacheCoordinator 缓存协调器
      */
-    injectCacheCoordinator(cacheCoordinator: DBCacheCoordinator<MockCacheTypeSet>): void {
+    async injectCacheCoordinator(cacheCoordinator: DBCacheCoordinator<MockCacheTypeSet>): Promise<void> {
         this.cache = cacheCoordinator;
-        // 订阅数据库通知
-        this.subscribeNotify();
+        // 订阅数据库通知 —— 必须等它完成, 否则后续写库会落在聋窗里
+        await this.subscribeNotify();
     }
 
     /**获取表名

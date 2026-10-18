@@ -144,8 +144,26 @@ export class DBCacheCoordinator<
             //下方 catch 中的 flight.run 会撞上自己的占位而静默返回, 重连链就此断掉不会再重试
             //宏任务必定排在 microtask 队列清空之后, 让出后key已释放, catch 中的重排必定生效
             await wait(100);
-            // 清空当前缓存
-            this.cache.clean();
+            // 清空当前缓存 —— **只在重连时做**
+            // #region
+            // 断线期间的通知已经丢了，缓存里那些条目**无法再被更新**，
+            // 留着就是脏数据；重连后清空让它们按需重建，这是 `clean()` 的本意。
+            //
+            // ⚠️ **首次订阅不能清**（实测踩到，2026-10-18）
+            // `setup()` 在**第一次**挂上 `LISTEN` 之前也要等这 100ms。
+            // 若此时无条件 `clean()`，就把「注入协调器之后、LISTEN 建立之前」
+            // 这段时间里老老实实写进缓存的条目**整个抹掉**。
+            // 更糟的是它没有任何痕迹：随后收到通知走 `update` 分支，
+            // 而 `tryUpdateCache` 开头就 `if (cacheData == null) return;`
+            // —— 静默什么都不做，表现为「缓存里查不到」。
+            //
+            // 判据用 `retryCount`：它在连接成功后清零，故 `> 0` 恰好表示
+            // 「这是 `scheduleRetry` 排出来的重连」，而非首次订阅。
+            // #endregion
+            if (retryCount > 0) {
+                SLogger.warn(`DBCacheCoordinator.subscribeNotify 重连成功前清空缓存(重连次数:${retryCount})`);
+                this.cache.clean();
+            }
 
             try {
                 const cur = await mgr._pool.connect();
@@ -189,11 +207,20 @@ export class DBCacheCoordinator<
             }
         };
 
-        // id 需按频道区分: 多个 coordinator 实例会向同一个 mgr 注册, 而 EventSystem 以 id 为键,
-        // 固定 id 会被后注册者覆盖, 使先注册者的 detach 丢失,
-        // 其 notifyClient 将永不归还, 导致 pool.end() 一直等待该连接而挂起
+        // **不要给这个 id 赋值**（指挥官定, 实测踩到 2026-10-19）
+        // #region
+        // `EventSystem` 以 id 为键, 同 id 注册会**覆盖**而非追加。
+        // 曾用 `db-cache-subscribe-notify-${targetChannel}` —— 只按频道区分,
+        // 于是**同一个频道上的两个 coordinator 实例**仍会撞 id:
+        // 后注册者把先注册者的 detach 顶掉, 前者的 `notifyClient` 永不归还,
+        // `pool.end()` 就一直等这条被借出的连接, 表现为 `manager.stop()` 挂死
+        // （实测: 两个 mock 协调器同听 'operation', stop 卡满 30s 超时）。
+        //
+        // 省略 id 时 `registerEvent` 会自动填 `JsFunc.genUUID()`,
+        // 每个实例一个唯一标识, 从根上消除冲突。
+        // 该 id 无需被外部按名引用, 因此不必也不应写死。
+        // #endregion
         mgr.registerEvent('onstop', {
-            id: `db-cache-subscribe-notify-${targetChannel}`,
             handler: detach
         });
 
