@@ -1,7 +1,8 @@
 import type { DBJsonDataStruct } from "../JsonDataStruct";
-import { DBJsonDataCacheCoordinator, DBOperation } from "../CacheCoordinator";
+import { DBJsonDataCacheCoordinator } from "../CacheCoordinator";
 import { SmartCache } from "@zwa73/utils";
 import { PostgreSQLMockTool } from "./PostgreSQLMockTool";
+import { DBOperation } from "../NotifyCoordinator";
 
 const { MOCK_TABLE_NAME, MOCK_ID_FIELD } = PostgreSQLMockTool;
 
