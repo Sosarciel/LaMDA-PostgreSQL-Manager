@@ -5,11 +5,14 @@ import { UtilDB } from "./UtilDB";
 import { DBNotifyCoordinator, DBOperation } from "./NotifyCoordinator";
 
 
+/**缓存条目 */
 type CacheEntry =
     | {key:string,struct:object}
     | {key:string,struct:object,notify:DBOperation<string,unknown>};
 
+/**从CacheEntry提取struct */
 type ExtStruct<T extends CacheEntry,K extends CacheEntry['key']> = Extract<T,{key:K}>['struct'];
+/**从CacheEntry提取notify */
 type ExtNotify<T extends CacheEntry> = Extract<T,{notify:unknown}>['notify'];
 
 
@@ -18,6 +21,7 @@ type ExtNotify<T extends CacheEntry> = Extract<T,{notify:unknown}>['notify'];
  * 用于连接pgsql的operation频道, 接受一个OP类型的操作通知
  * @template SET - 基于 CacheType 的联合类型 如  { key:`a-${string}`; data:A; } | { key:`b-${string}`;  data:B; }
  * @template OP - 数据库操作通知集, 必须在pgsql设置对应格式的notification, 并使用subscribeNotify订阅对应频道
+ * #region
  * @example ```typescript
  * type DBOperationNotify =
  *     | DBOperation<'message'       , MessageDbRow>
@@ -56,6 +60,7 @@ type ExtNotify<T extends CacheEntry> = Extract<T,{notify:unknown}>['notify'];
  * END;
  * $$;
  * ```
+ * #endregion
  */
 export class DBCacheCoordinator<
     SET extends CacheEntry,
